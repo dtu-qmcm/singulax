@@ -1,0 +1,22 @@
+# Ignore environment files
+.python-version
+.aider*
+.env
+boenv/
+.venv
+.pdm-python
+**egg-info**
+**.ipynb_checkpoints**
+*__pycache__*
+uv.lock
+.coverage
+*.aux
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.lof
+*.lot
+*.gz
