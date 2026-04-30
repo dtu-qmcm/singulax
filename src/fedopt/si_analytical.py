@@ -1,0 +1,25 @@
+import jax.numpy as jnp
+from fedopt.si_kinetics import sigma
+from fedopt.odes import vf_states
+
+def states_analytical_sol(t, y, args):
+    S_F, V_max = args
+    Ks = 0.1
+    Ki = 100
+
+    S_star = jnp.sqrt(Ks * Ki)
+    sigma_star = sigma(S_star)
+    F_opt_ana = (sigma_star* y[0]) / (S_F-S_star)
+    F = jnp.where(y[3]>= V_max, 0.0, F_opt_ana)
+
+    vf = vf_states(t, y, (S_F, F))
+
+    return vf
+
+def calculate_real_feed(states, args):
+    S_F, V_max, Ks, Ki = args
+    
+    S_star = jnp.sqrt(Ks * Ki)
+    F_opt_ana = (sigma(S_star) * states[0]) / (S_F - S_star)
+
+    return jnp.where(states[3] < V_max, F_opt_ana, 0.0)
