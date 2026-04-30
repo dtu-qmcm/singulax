@@ -4,6 +4,7 @@
 .env
 boenv/
 .venv/
+bin/
 .pdm-python
 **egg-info**
 **.ipynb_checkpoints**
