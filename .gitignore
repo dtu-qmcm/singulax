@@ -3,7 +3,7 @@
 .aider*
 .env
 boenv/
-.venv
+.venv/
 .pdm-python
 **egg-info**
 **.ipynb_checkpoints**
