@@ -1,0 +1,203 @@
+import optimistix as optx
+import jax
+import os
+import diffrax
+import jax.numpy as jnp
+from diffrax import ODETerm, Kvaerno5, SaveAt, diffeqsolve
+import matplotlib.pyplot as plt
+from fedopt.si_analytical import states_analytical_sol, calculate_real_feed, volume_cond
+from fedopt.shooting import loss_fn_sing_and_batch
+from fedopt.odes import vector_field, get_phi
+from fedopt.Fsin import get_Fsin_unconstrained, get_Fsin
+
+jax.config.update("jax_enable_x64", True)
+
+Ks = 0.1
+Ki = 100
+S0 = jnp.sqrt(Ks*Ki)
+S_F = 150
+V_max = 4.0
+F_max = 2.0
+F_min = 0.0
+t_end = 9.0
+
+# Get x_switch directly from forward analytical solution
+y0 = jnp.array([10, jnp.log(S0*1), 0., 1.])
+x0 = y0[:4]
+l0 = y0[4:]
+sol_ana = diffeqsolve(
+    ODETerm(states_analytical_sol), Kvaerno5(),
+    t0=0, t1=t_end, dt0=0.01, y0=y0,
+    stepsize_controller = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10),
+    args=(S_F, V_max),
+    saveat=SaveAt(ts=jnp.linspace(0, t_end, 2000))
+)
+
+XV_tf = sol_ana.ys[-1, 0]
+SV_tf = sol_ana.ys[-1, 1]
+PV_tf = sol_ana.ys[-1, 2]
+V_tf = sol_ana.ys[-1, 3]
+
+x_tf =  jnp.array([XV_tf, SV_tf, PV_tf, V_tf])
+
+get_Fs = jax.vmap(lambda y: calculate_real_feed(jnp.array([y[0], jnp.exp(y[1]), y[2], y[3]]), (S_F, V_max, Ks, Ki)))
+Fs = get_Fs(sol_ana.ys)
+
+root_finder = optx.Newton(1e-5, 1e-5, optx.rms_norm)
+event = diffrax.Event(volume_cond, root_finder)
+
+# Run the SINGULAR phase to find t_switch
+sol = diffeqsolve(
+    ODETerm(states_analytical_sol), 
+    Kvaerno5(),
+    t0=0, t1=t_end, dt0=0.01, y0=y0,
+    event=event,
+    stepsize_controller=diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10),
+    args=(S_F, V_max)
+)
+t_switch = sol.ts.squeeze()
+
+print(f"Switching time:", t_switch)
+
+# Singular arc phase
+if __name__ == "__main__":
+    print("=== Optimal Control Optimization for Singular Arc ===\n")
+    l4_tf_guess = -0.1
+    print("Final guess l4tf = ",l4_tf_guess)
+
+    solver = optx.BFGS(rtol=1e-5, atol=1e-6)
+    print("\nStarting optimization")
+    solution = optx.minimise(
+        fn = loss_fn_sing_and_batch,
+        solver=solver,
+        y0=l4_tf_guess,
+        args=(t_end, x0, S_F, x_tf, t_switch, V_max, F_min, F_max),
+        max_steps=500
+    )
+
+    if solution is not None:
+        optimal_l4_guess = solution.value
+        print("Optimal solution found!:", optimal_l4_guess)
+        y_tf_opt = jnp.array([x_tf[0], x_tf[1], x_tf[2], x_tf[3], 0.0, 0.0, 1.0, optimal_l4_guess])
+        sol_to_tswitch= diffeqsolve(
+            terms=diffrax.ODETerm(lambda t, y, args: vector_field(t, y, (S_F, 0.0))),
+            solver=diffrax.Kvaerno5(),
+            t0=t_end,
+            t1=t_switch,
+            dt0=-0.01,
+            y0=y_tf_opt,
+            stepsize_controller = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10),
+            max_steps=100000,
+            saveat=diffrax.SaveAt(ts=jnp.linspace(t_end, t_switch, 500))
+            )
+        y_at_tswitch = sol_to_tswitch.ys[-1]
+
+        sol_to_t0= diffeqsolve(
+            terms=diffrax.ODETerm(lambda t, y, args: vector_field(t, y, (S_F, get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max))))),
+            solver=diffrax.Kvaerno5(),
+            t0=t_switch,
+            t1=0.0,
+            dt0=-0.01,
+            y0=y_at_tswitch,
+            stepsize_controller = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10),
+            max_steps=100000,
+            saveat=diffrax.SaveAt(ts=jnp.linspace(t_switch, 0.0, 500))
+            )
+        y_at_t0 = sol_to_t0.ys[-1]
+        __import__("pdb").set_trace()
+
+        # Simulate forward for plotting
+        sol1 = diffeqsolve(
+            terms=diffrax.ODETerm(lambda t, y, args: vector_field(t, y, (S_F, get_Fsin(y, (S_F, V_max, F_min, F_max))))),
+            solver=diffrax.Kvaerno5(),
+            t0=0.0, t1=t_switch, dt0=0.01,
+            y0=y_at_t0,
+            stepsize_controller = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10),
+            max_steps=100000,
+            saveat=SaveAt(ts=jnp.linspace(0.0, t_switch, 500))
+        )
+        t1 = sol1.ts[-1]
+        y1 = sol1.ys[-1]
+
+        sol2 = diffeqsolve(
+            terms=diffrax.ODETerm(lambda t, y, args: vector_field(t, y, (S_F, 0.0))),
+            solver=diffrax.Kvaerno5(),
+            t0=t_switch, t1=t_end, dt0=0.01,
+            y0=y1,
+            stepsize_controller = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10),
+            max_steps=100000,
+            saveat=SaveAt(ts=jnp.linspace(t_switch, t_end, 500))
+        )
+        t2 = sol2.ts[-1]
+        y2 = sol2.ys[-1]
+
+        t_plot   = jnp.concatenate([sol1.ts, sol2.ts])
+        y_plot   = jnp.concatenate([sol1.ys, sol2.ys])
+
+        plt.style.use('seaborn-v0_8-whitegrid')
+        plt.rcParams['font.family'] = 'serif'
+        plt.rcParams['mathtext.fontset'] = 'dejavuserif'
+        plt.rcParams['axes.titlesize'] = 24
+        plt.rcParams['axes.labelsize'] = 22
+        plt.rcParams['legend.fontsize'] = 20
+        plt.rcParams['figure.titlesize'] = 26
+        plt.rcParams['legend.frameon'] = True
+        plt.rcParams['legend.facecolor'] = 'white'
+        plt.rcParams['legend.edgecolor'] = 'gray'
+        fig, axes = plt.subplots(4, 1, figsize=(14, 15))
+        fig.suptitle('PMP shooting during singular arc for S=S*', fontsize=28)
+
+        # Plot State variables
+        axes[0].plot(t_plot, y_plot[:,0], label='(XV)', color='black', linestyle='--')
+        axes[0].plot(t_plot, y_plot[:,1], label='(SV)', color='black', marker='s', linestyle='-', markevery=50)
+        axes[0].plot(t_plot, y_plot[:,2], label='(PV)', color='black', linestyle='-')
+        axes[0].plot(t_plot, y_plot[:,3], label='V', color='black', marker='o', linestyle='-', markevery=50)
+        axes[0].set_ylabel('State (g or V)')
+        axes[0].set_xlabel('Time (h)')
+        axes[0].set_title('State variables')
+        axes[0].grid(True)
+        axes[0].legend()
+
+        # Plot S and P concentration
+        axes[1].plot(t_plot, jnp.array(y_plot[:,1]) / jnp.array(y_plot[:,3]), label='S', color='black', linestyle='-')
+        axes[1].plot(t_plot, jnp.array(y_plot[:,2]) / jnp.array(y_plot[:,3]), label='P', color='black', linestyle='--')
+        axes[1].set_ylabel('Concentration (g/L)')
+        axes[1].set_xlabel('Time (h)')
+        axes[1].set_title('S and P concentration')
+        axes[1].grid(True)
+        axes[1].legend()
+
+        F_actual = jax.vmap(lambda y: get_Fsin(y, (S_F, V_max, F_min, F_max)))(y_plot)
+        phi_plot = jax.vmap(get_phi)(y_plot)
+        axes[2].plot(t_plot, F_actual, label='Feed Rate', color='black')
+        axes[2].set_ylabel('Feed rate (L/h)')
+        axes[2].set_xlabel('Time (h)')
+        axes[2].set_title('Feed rate')
+        axes[2].grid(True)
+
+        axes[2].plot(t_plot, phi_plot, color='black', label=r'$\phi(t)$', linestyle = '--')
+        axes[2].axhline(0, color='black', linestyle='--', alpha=0.5)
+        axes[2].set_title('Switching Function')
+        axes[2].legend()
+
+        axes[3].plot(t_plot, y_plot[:,4], label='l1', color='black', linestyle='--')
+        axes[3].plot(t_plot, y_plot[:,5], label='l2', color='black', marker = 's', linestyle='-', markevery=50)
+        axes[3].plot(t_plot, y_plot[:,6], label='l3', color='black', linestyle='-')
+        axes[3].plot(t_plot, y_plot[:,7], label='l4', color='black', marker = 'o', linestyle='-', markevery=50)
+        axes[3].set_ylabel('Costates')
+        axes[3].set_xlabel('Time (h)')
+        axes[3].set_title('Adjoints variables')
+        axes[3].grid(True)
+        axes[3].legend()
+
+        print("Final XV value", y_plot[-1, 0])
+        print("Final SV value", y_plot[-1, 1])
+        print("Final PV value", y_plot[-1, 2])
+        print("Final V value", y_plot[-1, 3])
+
+        plt.tight_layout(rect=[0, 0.03, 1, 0.96])
+        plt.show()
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        file_name = "output_pmp_sing_and_batch.png"
+        output_path = os.path.join(script_dir, file_name)
+        plt.savefig(output_path)
