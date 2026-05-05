@@ -1,5 +1,5 @@
 from .odes import f_vec, g_vec, vf_states, vector_field, get_dldt, hybrid_fedbatch, get_phi
-from .si_analytical import states_analytical_sol, calculate_real_feed
+from .si_analytical import states_analytical_sol, calculate_real_feed, volume_cond, states_analytical_sol_batch, states_analytical_sol_singular
 from .si_kinetics import mu, pi, m_func, sigma
 from .Fsin import lie_bracket_fg, inner_bracket, get_Fsin
 from .shooting import solve_and_get_residuals, loss_fn
@@ -22,5 +22,8 @@ __all__ = [
     "inner_bracket",
     "get_Fsin",
     "solve_and_get_residuals",
-    "loss_fn"
+    "loss_fn",
+    "volume_cond",
+    "states_analytical_sol_batch",
+    "states_analytical_sol_singular"
 ]
