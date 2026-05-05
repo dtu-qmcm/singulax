@@ -25,3 +25,19 @@ def get_Fsin(y, args):
     F = jnp.where(y[3] >= V_max, 0.0, F_sin_clip)
         
     return F
+
+def get_Fsin_unconstrained(y, args):
+    S_F, V_max, Fmin, Fmax = args
+    x, l = jnp.split(y, 2)
+    
+    # Term A (Numerator): l.T * [f, [f, g]]
+    term_A = l @ (jax.jacobian(inner_bracket)(x, S_F) @ f_vec(x))
+    
+    # Term B (Denominator): l.T * [g, [f, g]]
+    term_B = l @ (jax.jacobian(inner_bracket)(x, S_F) @ g_vec(x, S_F))
+
+    # Final Singular Feed: F = -Term_A / Term_B
+    F_sin = -term_A / (term_B + 1e-9)
+    F_sin_clip = jnp.clip(F_sin, Fmin, Fmax)
+        
+    return F_sin_clip
