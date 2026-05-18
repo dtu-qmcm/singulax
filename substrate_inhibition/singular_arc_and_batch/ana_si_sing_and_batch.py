@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import jax.numpy as jnp
 import jax
-from fedopt.si_analytical import states_analytical_sol, calculate_real_feed
+from fedopt.si_analytical import states_analytical_sol, calculate_real_feed, volume_cond
 
 jax.config.update("jax_enable_x64", True)
 
@@ -17,10 +17,6 @@ y0 = jnp.array([10, jnp.log(S0*1), 0., 1.])
 S_F = 150
 V_max = 4
 t_end = 9.0
-
-# Define the condition: stop when volume hits V_max
-def volume_cond(t, y, args, **kwargs):
-    return (y[3]-V_max)
 
 root_finder = optx.Newton(1e-5, 1e-5, optx.rms_norm)
 event = diffrax.Event(volume_cond, root_finder)
