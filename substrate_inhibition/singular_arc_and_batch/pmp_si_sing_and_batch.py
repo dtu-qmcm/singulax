@@ -3,10 +3,10 @@ import jax
 import os
 import diffrax
 import jax.numpy as jnp
-from diffrax import ODETerm, Kvaerno5, SaveAt, diffeqsolve
+from diffrax import ODETerm, Kvaerno5, SaveAt, diffeqsolve, Dopri5
 import matplotlib.pyplot as plt
 from fedopt.si_analytical import states_analytical_sol, calculate_real_feed, volume_cond
-from fedopt.shooting import loss_fn_sing_and_batch
+from fedopt.shooting import loss_fn_batch
 from fedopt.odes import vector_field, get_phi
 from fedopt.Fsin import get_Fsin_unconstrained, get_Fsin
 
@@ -15,34 +15,14 @@ jax.config.update("jax_enable_x64", True)
 Ks = 0.1
 Ki = 100
 S0 = jnp.sqrt(Ks*Ki)
+y0 = jnp.array([10, jnp.log(S0*1), 0., 1.])
 S_F = 150
 V_max = 4.0
 F_max = 2.0
 F_min = 0.0
 t_end = 9.0
 
-# Get x_switch directly from forward analytical solution
-y0 = jnp.array([10, jnp.log(S0*1), 0., 1.])
-x0 = y0[:4]
-l0 = y0[4:]
-sol_ana = diffeqsolve(
-    ODETerm(states_analytical_sol), Kvaerno5(),
-    t0=0, t1=t_end, dt0=0.01, y0=y0,
-    stepsize_controller = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10),
-    args=(S_F, V_max),
-    saveat=SaveAt(ts=jnp.linspace(0, t_end, 2000))
-)
-
-XV_tf = sol_ana.ys[-1, 0]
-SV_tf = sol_ana.ys[-1, 1]
-PV_tf = sol_ana.ys[-1, 2]
-V_tf = sol_ana.ys[-1, 3]
-
-x_tf =  jnp.array([XV_tf, SV_tf, PV_tf, V_tf])
-
-get_Fs = jax.vmap(lambda y: calculate_real_feed(jnp.array([y[0], jnp.exp(y[1]), y[2], y[3]]), (S_F, V_max, Ks, Ki)))
-Fs = get_Fs(sol_ana.ys)
-
+# Get x_tf directly from forward analytical solution
 root_finder = optx.Newton(1e-5, 1e-5, optx.rms_norm)
 event = diffrax.Event(volume_cond, root_finder)
 
@@ -59,6 +39,38 @@ t_switch = sol.ts.squeeze()
 
 print(f"Switching time:", t_switch)
 
+# Solve ODE in two phases
+solution_to_tswitch = diffeqsolve(
+    ODETerm(states_analytical_sol), 
+    Kvaerno5(),
+    t0=0, t1=t_switch, dt0=0.01, y0=y0,
+    stepsize_controller=diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10),
+    saveat=diffrax.SaveAt(ts=jnp.linspace(0.0, t_switch, 500)),
+    args=(S_F, V_max)
+)
+y_at_switch = solution_to_tswitch.ys[-1]
+
+solution_to_end = diffeqsolve(ODETerm(states_analytical_sol),
+                              Kvaerno5(),
+                              stepsize_controller=diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10),
+                              t0=t_switch, t1=t_end, dt0=0.01,
+                              y0=y_at_switch,
+                              saveat= diffrax.SaveAt(ts=jnp.linspace(t_switch, t_end, 500)),
+                              args=(S_F, V_max),
+                              max_steps=int(1e6)                              
+                              )
+
+XV_tf = solution_to_end.ys[-1, 0]
+SV_tf = solution_to_end.ys[-1, 1]
+PV_tf = solution_to_end.ys[-1, 2]
+V_tf = solution_to_end.ys[-1, 3]
+
+x_tf =  jnp.array([XV_tf,SV_tf, PV_tf, V_tf])
+print("Final states gotten from analytical solution:", jnp.array([XV_tf,jnp.exp(SV_tf), PV_tf, V_tf]))
+
+get_Fs = jax.vmap(lambda y: calculate_real_feed(jnp.array([y[0], jnp.exp(y[1]), y[2], y[3]]), (S_F, V_max, Ks, Ki)))
+Fs = get_Fs(solution_to_end.ys)
+
 # Singular arc phase
 if __name__ == "__main__":
     print("=== Optimal Control Optimization for Singular Arc ===\n")
@@ -68,10 +80,10 @@ if __name__ == "__main__":
     solver = optx.BFGS(rtol=1e-5, atol=1e-6)
     print("\nStarting optimization")
     solution = optx.minimise(
-        fn = loss_fn_sing_and_batch,
+        fn = loss_fn_batch,
         solver=solver,
         y0=l4_tf_guess,
-        args=(t_end, x0, S_F, x_tf, t_switch, V_max, F_min, F_max),
+        args=(t_end, y0, S_F, x_tf, t_switch, V_max, F_min, F_max),
         max_steps=500
     )
 
@@ -86,8 +98,8 @@ if __name__ == "__main__":
             t1=t_switch,
             dt0=-0.01,
             y0=y_tf_opt,
-            stepsize_controller = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10),
-            max_steps=100000,
+            stepsize_controller = diffrax.PIDController(rtol=1e-6, atol=1e-8),
+            max_steps=int(1e5),
             saveat=diffrax.SaveAt(ts=jnp.linspace(t_end, t_switch, 500))
             )
         y_at_tswitch = sol_to_tswitch.ys[-1]
@@ -99,40 +111,14 @@ if __name__ == "__main__":
             t1=0.0,
             dt0=-0.01,
             y0=y_at_tswitch,
-            stepsize_controller = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10),
-            max_steps=100000,
+            stepsize_controller = diffrax.PIDController(rtol=1e-6, atol=1e-8),
+            max_steps=int(1e5),
             saveat=diffrax.SaveAt(ts=jnp.linspace(t_switch, 0.0, 500))
             )
         y_at_t0 = sol_to_t0.ys[-1]
-        __import__("pdb").set_trace()
 
-        # Simulate forward for plotting
-        sol1 = diffeqsolve(
-            terms=diffrax.ODETerm(lambda t, y, args: vector_field(t, y, (S_F, get_Fsin(y, (S_F, V_max, F_min, F_max))))),
-            solver=diffrax.Kvaerno5(),
-            t0=0.0, t1=t_switch, dt0=0.01,
-            y0=y_at_t0,
-            stepsize_controller = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10),
-            max_steps=100000,
-            saveat=SaveAt(ts=jnp.linspace(0.0, t_switch, 500))
-        )
-        t1 = sol1.ts[-1]
-        y1 = sol1.ys[-1]
-
-        sol2 = diffeqsolve(
-            terms=diffrax.ODETerm(lambda t, y, args: vector_field(t, y, (S_F, 0.0))),
-            solver=diffrax.Kvaerno5(),
-            t0=t_switch, t1=t_end, dt0=0.01,
-            y0=y1,
-            stepsize_controller = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10),
-            max_steps=100000,
-            saveat=SaveAt(ts=jnp.linspace(t_switch, t_end, 500))
-        )
-        t2 = sol2.ts[-1]
-        y2 = sol2.ys[-1]
-
-        t_plot   = jnp.concatenate([sol1.ts, sol2.ts])
-        y_plot   = jnp.concatenate([sol1.ys, sol2.ys])
+        t_plot   = jnp.concatenate([sol_to_tswitch.ts, sol_to_t0.ts])
+        y_plot   = jnp.concatenate([sol_to_tswitch.ys, sol_to_t0.ys])
 
         plt.style.use('seaborn-v0_8-whitegrid')
         plt.rcParams['font.family'] = 'serif'
@@ -149,7 +135,7 @@ if __name__ == "__main__":
 
         # Plot State variables
         axes[0].plot(t_plot, y_plot[:,0], label='(XV)', color='black', linestyle='--')
-        axes[0].plot(t_plot, y_plot[:,1], label='(SV)', color='black', marker='s', linestyle='-', markevery=50)
+        axes[0].plot(t_plot, jnp.exp(y_plot[:,1]), label='(SV)', color='black', marker='s', linestyle='-', markevery=50)
         axes[0].plot(t_plot, y_plot[:,2], label='(PV)', color='black', linestyle='-')
         axes[0].plot(t_plot, y_plot[:,3], label='V', color='black', marker='o', linestyle='-', markevery=50)
         axes[0].set_ylabel('State (g or V)')
@@ -159,7 +145,7 @@ if __name__ == "__main__":
         axes[0].legend()
 
         # Plot S and P concentration
-        axes[1].plot(t_plot, jnp.array(y_plot[:,1]) / jnp.array(y_plot[:,3]), label='S', color='black', linestyle='-')
+        axes[1].plot(t_plot, jnp.array(jnp.exp(y_plot[:,1])) / jnp.array(y_plot[:,3]), label='S', color='black', linestyle='-')
         axes[1].plot(t_plot, jnp.array(y_plot[:,2]) / jnp.array(y_plot[:,3]), label='P', color='black', linestyle='--')
         axes[1].set_ylabel('Concentration (g/L)')
         axes[1].set_xlabel('Time (h)')
@@ -191,7 +177,7 @@ if __name__ == "__main__":
         axes[3].legend()
 
         print("Final XV value", y_plot[-1, 0])
-        print("Final SV value", y_plot[-1, 1])
+        print("Final SV value", jnp.exp(y_plot[-1, 1]))
         print("Final PV value", y_plot[-1, 2])
         print("Final V value", y_plot[-1, 3])
 
