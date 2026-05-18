@@ -57,7 +57,7 @@ solution_to_end = diffeqsolve(ODETerm(states_analytical_sol_batch),
                               )
 
 sol_at_end = solution_to_end.ys[-1]
-
+print("Sol_at_end:", sol_at_end)
 # Backward integration
 sol_to_tswitch = diffeqsolve(
             terms=diffrax.ODETerm(states_analytical_sol_batch),
