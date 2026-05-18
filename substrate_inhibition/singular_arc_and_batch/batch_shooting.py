@@ -36,6 +36,7 @@ PV_tf = sol_ana.ys[-1, 2]
 V_tf = sol_ana.ys[-1, 3]
 
 x_tf =  jnp.array([XV_tf, SV_tf, PV_tf, V_tf])
+print("Final states:", jnp.array([XV_tf, jnp.exp(SV_tf), PV_tf, V_tf]))
 
 get_Fs = jax.vmap(lambda y: calculate_real_feed(y[:4],(S_F, V_max, Ks, Ki)))
 Fs = get_Fs(sol_ana.ys)
