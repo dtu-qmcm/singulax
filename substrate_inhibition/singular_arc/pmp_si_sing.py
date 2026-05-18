@@ -3,7 +3,7 @@ import os
 import jax
 import diffrax
 import jax.numpy as jnp
-from diffrax import ODETerm, Dopri5, SaveAt, diffeqsolve
+from diffrax import ODETerm, Dopri5, SaveAt, diffeqsolve, Kvaerno5
 import numpy as np
 import matplotlib.pyplot as plt
 from fedopt.si_analytical import states_analytical_sol
@@ -69,11 +69,12 @@ if __name__ == "__main__":
         # Simulate backward to get optimal l0 and x0
         full_sol_backward = diffeqsolve(
         terms=diffrax.ODETerm(lambda t, y, args: vector_field(t, y, (S_F, get_Fsin(y, (S_F, V_max, F_min, F_max))))),
-        solver=diffrax.Dopri5(),
+        solver=diffrax.Kvaerno5(),
         t0=t_end,
         t1=0.0,
         dt0=-0.01,
         y0=ytf_opt,
+        stepsize_controller=diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10),
         saveat=diffrax.SaveAt(ts=jnp.linspace(t_end, 0.0, 500))
         )
         y_at_t0 = full_sol_backward.ys[-1] 
@@ -85,9 +86,10 @@ if __name__ == "__main__":
         ts = jnp.linspace(0.0, t_end, 500)
         sol = diffeqsolve(
             terms=diffrax.ODETerm(lambda t, y, args: vector_field(t, y, (S_F, get_Fsin(y, (S_F, V_max, F_min, F_max))))),
-            solver=Dopri5(),
+            solver=Kvaerno5(),
             t0=0.0, t1=t_end, dt0=0.01,
             y0=y0_forward,
+            stepsize_controller=diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10), 
             saveat=SaveAt(ts=ts)
         )
         t_plot   = sol.ts         
