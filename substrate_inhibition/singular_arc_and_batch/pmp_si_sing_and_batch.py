@@ -123,14 +123,14 @@ if __name__ == "__main__":
         plt.style.use('seaborn-v0_8-whitegrid')
         plt.rcParams['font.family'] = 'serif'
         plt.rcParams['mathtext.fontset'] = 'dejavuserif'
-        plt.rcParams['axes.titlesize'] = 24
-        plt.rcParams['axes.labelsize'] = 22
-        plt.rcParams['legend.fontsize'] = 20
-        plt.rcParams['figure.titlesize'] = 26
+        plt.rcParams['axes.titlesize'] = 20
+        plt.rcParams['axes.labelsize'] = 16
+        plt.rcParams['legend.fontsize'] = 14
+        plt.rcParams['figure.titlesize'] = 12
         plt.rcParams['legend.frameon'] = True
         plt.rcParams['legend.facecolor'] = 'white'
         plt.rcParams['legend.edgecolor'] = 'gray'
-        fig, axes = plt.subplots(5, 1, figsize=(14, 15))
+        fig, axes = plt.subplots(5, 1, figsize=(12, 16), layout='constrained')
         fig.suptitle('PMP shooting during singular arc for S=S*', fontsize=28)
 
         # Plot State variables
@@ -161,24 +161,24 @@ if __name__ == "__main__":
             F_min
         )
         axes[2].plot(t_plot, F_plot, label='Feed Rate', color='black')
-        axes[2].set_ylabel('Feed rate (L/h)')
+        axes[2].set_ylabel('F (L/h)')
         axes[2].set_xlabel('Time (h)')
         axes[2].set_title('Feed rate')
         axes[2].grid(True)
 
-        axes[3].plot(t_plot, phi_plot, color='black', label=r'$\phi(t)$', linestyle = '--')
+        axes[3].plot(t_plot, phi_plot, color='black', label=r'$\phi(t)$ y', linestyle = '--')
         axes[3].axhline(0, color='black', linestyle='--', alpha=0.5)
         axes[3].set_title('Switching Function')
-        axes[3].legend()
+        axes[3].set_ylabel(r'$\phi(t)$')
 
         ax4 = axes[4]
         ax4b = ax4.twinx()
-        axes[4].plot(t_plot, y_plot[:,4], label='l1', color='black', linestyle='--')
-        axes[4].plot(t_plot, y_plot[:,5], label='l2', color='black', marker = 's', linestyle='-', markevery=50)
-        axes[4].plot(t_plot, y_plot[:,6], label='l3', color='black', linestyle='-')
-        ax4b.plot(t_plot, y_plot[:,7], label='l4', color='black', marker = 'o', linestyle='-', markevery=50)
-        axes[4].set_ylabel('l1, l2, l3')
-        ax4b.set_ylabel('l4')
+        axes[4].plot(t_plot, y_plot[:,4], label=r'$\lambda_1$', color='black', linestyle='--')
+        axes[4].plot(t_plot, y_plot[:,5], label=r'$\lambda_2$', color='black', marker = 's', linestyle='-', markevery=50)
+        axes[4].plot(t_plot, y_plot[:,6], label=r'$\lambda_3$', color='black', linestyle='-')
+        ax4b.plot(t_plot, y_plot[:,7], label=r'$\lambda_4$', color='black', marker = 'o', linestyle='-', markevery=50)
+        axes[4].set_ylabel(r'$\lambda_1, \lambda_2, \lambda_3$')
+        ax4b.set_ylabel(r'$\lambda_4$')
         axes[4].set_xlabel('Time (h)')
         axes[4].set_title('Adjoints variables')
         axes[4].grid(True)
@@ -190,7 +190,6 @@ if __name__ == "__main__":
         print("Final PV value", y_plot[-1, 2])
         print("Final V value", y_plot[-1, 3])
 
-        plt.tight_layout(rect=[0, 0.03, 1, 0.96])
         script_dir = os.path.dirname(os.path.abspath(__file__))
         file_name = "output_pmp_sing_and_batch.png"
         output_path = os.path.join(script_dir, file_name)
