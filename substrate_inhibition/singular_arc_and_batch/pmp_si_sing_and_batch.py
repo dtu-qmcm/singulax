@@ -117,8 +117,8 @@ if __name__ == "__main__":
             )
         y_at_t0 = sol_to_t0.ys[-1]
 
-        t_plot   = jnp.concatenate([sol_to_tswitch.ts, sol_to_t0.ts])
-        y_plot   = jnp.concatenate([sol_to_tswitch.ys, sol_to_t0.ys])
+        t_plot = jnp.concatenate([sol_to_tswitch.ts, sol_to_t0.ts])
+        y_plot = jnp.concatenate([sol_to_tswitch.ys, sol_to_t0.ys])
 
         plt.style.use('seaborn-v0_8-whitegrid')
         plt.rcParams['font.family'] = 'serif'
@@ -130,7 +130,7 @@ if __name__ == "__main__":
         plt.rcParams['legend.frameon'] = True
         plt.rcParams['legend.facecolor'] = 'white'
         plt.rcParams['legend.edgecolor'] = 'gray'
-        fig, axes = plt.subplots(4, 1, figsize=(14, 15))
+        fig, axes = plt.subplots(5, 1, figsize=(14, 15))
         fig.suptitle('PMP shooting during singular arc for S=S*', fontsize=28)
 
         # Plot State variables
@@ -153,28 +153,37 @@ if __name__ == "__main__":
         axes[1].grid(True)
         axes[1].legend()
 
-        F_actual = jax.vmap(lambda y: get_Fsin(y, (S_F, V_max, F_min, F_max)))(y_plot)
         phi_plot = jax.vmap(get_phi)(y_plot)
-        axes[2].plot(t_plot, F_actual, label='Feed Rate', color='black')
+        F_sin_val = jax.vmap(lambda y: get_Fsin(y, (S_F, V_max, F_min, F_max)))(y_plot)
+        F_plot = jnp.where(
+            t_plot<t_switch,
+            F_sin_val,
+            F_min
+        )
+        axes[2].plot(t_plot, F_plot, label='Feed Rate', color='black')
         axes[2].set_ylabel('Feed rate (L/h)')
         axes[2].set_xlabel('Time (h)')
         axes[2].set_title('Feed rate')
         axes[2].grid(True)
 
-        axes[2].plot(t_plot, phi_plot, color='black', label=r'$\phi(t)$', linestyle = '--')
-        axes[2].axhline(0, color='black', linestyle='--', alpha=0.5)
-        axes[2].set_title('Switching Function')
-        axes[2].legend()
-
-        axes[3].plot(t_plot, y_plot[:,4], label='l1', color='black', linestyle='--')
-        axes[3].plot(t_plot, y_plot[:,5], label='l2', color='black', marker = 's', linestyle='-', markevery=50)
-        axes[3].plot(t_plot, y_plot[:,6], label='l3', color='black', linestyle='-')
-        axes[3].plot(t_plot, y_plot[:,7], label='l4', color='black', marker = 'o', linestyle='-', markevery=50)
-        axes[3].set_ylabel('Costates')
-        axes[3].set_xlabel('Time (h)')
-        axes[3].set_title('Adjoints variables')
-        axes[3].grid(True)
+        axes[3].plot(t_plot, phi_plot, color='black', label=r'$\phi(t)$', linestyle = '--')
+        axes[3].axhline(0, color='black', linestyle='--', alpha=0.5)
+        axes[3].set_title('Switching Function')
         axes[3].legend()
+
+        ax4 = axes[4]
+        ax4b = ax4.twinx()
+        axes[4].plot(t_plot, y_plot[:,4], label='l1', color='black', linestyle='--')
+        axes[4].plot(t_plot, y_plot[:,5], label='l2', color='black', marker = 's', linestyle='-', markevery=50)
+        axes[4].plot(t_plot, y_plot[:,6], label='l3', color='black', linestyle='-')
+        ax4b.plot(t_plot, y_plot[:,7], label='l4', color='black', marker = 'o', linestyle='-', markevery=50)
+        axes[4].set_ylabel('l1, l2, l3')
+        ax4b.set_ylabel('l4')
+        axes[4].set_xlabel('Time (h)')
+        axes[4].set_title('Adjoints variables')
+        axes[4].grid(True)
+        axes[4].legend(loc='upper left')
+        ax4b.legend(loc='upper right')
 
         print("Final XV value", y_plot[-1, 0])
         print("Final SV value", jnp.exp(y_plot[-1, 1]))
