@@ -93,8 +93,7 @@ def solve_and_get_residuals_sing_and_batch(l4_tf_guess, args):
         dt0=-0.01,
         saveat=diffrax.SaveAt(t1=True),
         stepsize_controller=stepsize_controller,
-        max_steps=int(1e5),
-        throw=False
+        max_steps=int(1e5)
     )
     y_at_t0 = sol_at_t0.ys[0]
     # Penalize diverged integrations
