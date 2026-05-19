@@ -77,7 +77,7 @@ print("Final V value", y_max[-1, 3])
 
 plt.tight_layout(rect=[0, 0.03, 1, 0.96])
 script_dir = os.path.dirname(os.path.abspath(__file__))
-file_name = "output_ana_so_sing.png"
+file_name = "output_ana_si_sing.png"
 output_path = os.path.join(script_dir, file_name)
 plt.savefig(output_path)
 plt.show()
