@@ -22,25 +22,46 @@ def vf_states(t,y, args):
     dx_dt = f_vec(y) + g_vec(y, S_F) * F
     return dx_dt
 
+def f_vec_orig(x_val):
+    S = x_val[1] / x_val[3]
+    return jnp.array([
+        mu(S) * x_val[0],
+        -sigma(S) * x_val[0],
+         pi(S) * x_val[0],
+         0.0
+    ])
+
+def g_vec_orig(x_val, S_F):
+    return jnp.array([0.0, S_F, 0.0, 1.0])
+
+def l_to_orig(x, l):
+    """Convert l[1] from log(SV)-conjugate to SV-conjugate."""
+    SV = jnp.exp(x[1])
+    return l.at[1].set(l[1] / SV)
+
 def get_dldt(t, y, args):
     S_F, F = args
     x, l = jnp.split(y, 2)
+    SV = jnp.exp(x[1])
     
     # Define the Hamiltonian: H = lambda^T * (f(x) + g(x)*F)
-    def hamiltonian(x_vars, S_F):
-        f = f_vec(x_vars)
-        g = g_vec(x_vars, S_F)
-        return l @ (f + g * F)
+    def hamiltonian(x_orig, S_F):
+        S = x_orig[1]/x_orig[3]
+
+        f_orig = f_vec_orig(x_orig)
+        g_orig = g_vec_orig(x_orig, S_F)
+        return l @ (f_orig + g_orig * F)
     
     # Adjoint equations: dl/dt = -dH/dx
-    dl_dt = -jax.grad(hamiltonian)(x, S_F)
+    x_orig = x.at[1].set(SV)
+    dl_dt = -jax.grad(hamiltonian)(x_orig, S_F)
+    
     return dl_dt
 
 def get_phi(y):
     x, l = jnp.split(y, 2)
-    SV = jnp.exp(x[1])
     S_F = 150.0
-    return l[1] * (S_F/SV) + l[3]
+    return l[1] * S_F + l[3]
 
 def vector_field(t, y, args):
     x, l = jnp.split(y, 2)
