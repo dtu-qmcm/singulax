@@ -195,3 +195,38 @@ if __name__ == "__main__":
         output_path = os.path.join(script_dir, file_name)
         plt.savefig(output_path)
         plt.show()
+        
+        # Create a new figure with 4 rows and 1 column
+        fig_lam, axes_lam = plt.subplots(4, 1, figsize=(10, 12), layout='constrained')
+        fig_lam.suptitle('Adjoint Variables (Lambdas) Detail', fontsize=20)
+        
+        # Lambda 1
+        axes_lam[0].plot(t_plot, y_plot[:,4], color='black', linestyle='-')
+        axes_lam[0].set_ylabel(r'$\lambda_1$')
+        axes_lam[0].set_title('Adjoint for XV')
+        axes_lam[0].grid(True)
+        
+        # Lambda 2
+        axes_lam[1].plot(t_plot, y_plot[:,5], color='black', marker='s', linestyle='-', markevery=50)
+        axes_lam[1].set_ylabel(r'$\lambda_2$')
+        axes_lam[1].set_title('Adjoint for SV')
+        axes_lam[1].grid(True)
+        
+        # Lambda 3
+        axes_lam[2].plot(t_plot, y_plot[:,6], color='black', linestyle='--')
+        axes_lam[2].set_ylabel(r'$\lambda_3$')
+        axes_lam[2].set_title('Adjoint for PV')
+        axes_lam[2].grid(True)
+        
+        # Lambda 4
+        axes_lam[3].plot(t_plot, y_plot[:,7], color='black', marker='o', linestyle='-', markevery=50)
+        axes_lam[3].set_ylabel(r'$\lambda_4$')
+        axes_lam[3].set_title('Adjoint for V')
+        axes_lam[3].set_xlabel('Time (h)')
+        axes_lam[3].grid(True)
+        
+        file_name_lam = "output_lambdas_detail.png"
+        output_path_lam = os.path.join(script_dir, file_name_lam)
+        fig_lam.savefig(output_path_lam)
+        plt.show()
+
