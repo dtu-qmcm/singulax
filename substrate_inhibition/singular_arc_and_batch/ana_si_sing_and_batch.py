@@ -111,4 +111,4 @@ plt.show()
 script_dir = os.path.dirname(os.path.abspath(__file__))
 file_name = "output_ana_si_sing_and_batch.png"
 output_path = os.path.join(script_dir, file_name)
-plt.savefig(output_path)
+plt.savefig(output_path, facecolor='white')
