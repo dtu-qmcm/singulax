@@ -140,8 +140,8 @@ print("Final PV value", y_plot[0, 2])
 print("Final V value", y_plot[0, 3])
 
 plt.tight_layout(rect=[0, 0.03, 1, 0.96])
-plt.show()
 script_dir = os.path.dirname(os.path.abspath(__file__))
 file_name = "output_back_ana_si_sing_and_batch.png"
 output_path = os.path.join(script_dir, file_name)
 plt.savefig(output_path)
+plt.show()
