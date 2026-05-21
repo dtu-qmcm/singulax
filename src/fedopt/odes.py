@@ -8,7 +8,7 @@ def f_vec(x_val):
 
     return jnp.array([
         mu(S) * x_val[0],
-        (-sigma(S) * x_val[0])/SV,
+        (-sigma(S) * x_val[0]/SV),
         pi(S) * x_val[0],
         0.0
     ])
@@ -43,11 +43,8 @@ def get_dldt(t, y, args):
     S_F, F = args
     x, l = jnp.split(y, 2)
     SV = jnp.exp(x[1])
-    
     # Define the Hamiltonian: H = lambda^T * (f(x) + g(x)*F)
     def hamiltonian(x_orig, S_F):
-        S = x_orig[1]/x_orig[3]
-
         f_orig = f_vec_orig(x_orig)
         g_orig = g_vec_orig(x_orig, S_F)
         return l @ (f_orig + g_orig * F)
