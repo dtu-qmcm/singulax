@@ -13,15 +13,13 @@ def get_Fsin_unconstrained(y, args):
     S_F, V_max, Fmin, Fmax = args
     x, l = jnp.split(y, 2)
     SV = jnp.exp(x[1])
-
     x_orig = x.at[1].set(SV)
-    l_orig = l_to_orig(x,l)
     
     # Term A (Numerator): l.T * [f, [f, g]]
-    term_A = l_orig @ (jax.jacobian(inner_bracket)(x_orig, S_F) @ f_vec_orig(x_orig))
+    term_A = l @ (jax.jacobian(inner_bracket)(x_orig, S_F) @ f_vec_orig(x_orig))
     
     # Term B (Denominator): l.T * [g, [f, g]]
-    term_B = l_orig @ (jax.jacobian(inner_bracket)(x_orig, S_F) @ g_vec_orig(x_orig, S_F))
+    term_B = l @ (jax.jacobian(inner_bracket)(x_orig, S_F) @ g_vec_orig(x_orig, S_F))
 
     # Final Singular Feed: F = -Term_A / Term_B
     F_sin = -term_A / (term_B + 1e-9)
