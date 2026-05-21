@@ -5,7 +5,7 @@ import jax.numpy as jnp
 from diffrax import ODETerm, Kvaerno5, SaveAt, diffeqsolve, Dopri5
 import numpy as np
 import matplotlib.pyplot as plt
-from fedopt.si_analytical import states_analytical_sol, calculate_real_feed
+from fedopt.si_analytical import states_analytical_sol, calculate_real_feed, volume_cond
 from fedopt.shooting import loss_fn_batch
 
 jax.config.update("jax_enable_x64", True)
@@ -40,10 +40,6 @@ print("Final states:", jnp.array([XV_tf, jnp.exp(SV_tf), PV_tf, V_tf]))
 
 get_Fs = jax.vmap(lambda y: calculate_real_feed(y[:4],(S_F, V_max, Ks, Ki)))
 Fs = get_Fs(sol_ana.ys)
-
-# Find t_switch
-def volume_cond(t, y, args, **kwargs):
-    return (y[3]-V_max)
 
 root_finder = optx.Newton(1e-5, 1e-5, optx.rms_norm)
 event = diffrax.Event(volume_cond, root_finder)
