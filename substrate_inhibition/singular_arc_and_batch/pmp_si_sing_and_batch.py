@@ -7,7 +7,7 @@ from diffrax import ODETerm, Kvaerno5, SaveAt, diffeqsolve, Dopri5
 import matplotlib.pyplot as plt
 from fedopt.si_analytical import states_analytical_sol, calculate_real_feed, volume_cond
 from fedopt.shooting import loss_fn_batch
-from fedopt.odes import vector_field, get_phi
+from fedopt.odes import vector_field, get_phi, get_dldt
 from fedopt.Fsin import get_Fsin_unconstrained, get_Fsin
 
 jax.config.update("jax_enable_x64", True)
@@ -131,7 +131,7 @@ if __name__ == "__main__":
         plt.rcParams['legend.facecolor'] = 'white'
         plt.rcParams['legend.edgecolor'] = 'gray'
         fig, axes = plt.subplots(5, 1, figsize=(12, 16), layout='constrained')
-        fig.suptitle('PMP shooting during singular arc for S=S*', fontsize=28)
+        fig.suptitle('PMP shooting during singular arc and batch phase', fontsize=28)
 
         # Plot State variables
         axes[0].plot(t_plot, y_plot[:,0], label='(XV)', color='black', linestyle='--')
@@ -185,10 +185,18 @@ if __name__ == "__main__":
         axes[4].legend(loc='upper left')
         ax4b.legend(loc='upper right')
 
-        print("Final XV value", y_plot[-1, 0])
-        print("Final SV value", jnp.exp(y_plot[-1, 1]))
-        print("Final PV value", y_plot[-1, 2])
-        print("Final V value", y_plot[-1, 3])
+        print("Final XV value", y_plot[0, 0])
+        print("Final SV value", jnp.exp(y_plot[0, 1]))
+        print("Final PV value", y_plot[0, 2])
+        print("Final V value", y_plot[0, 3])
+
+        y_test = y_plot[598]  # just before t_end
+        x_t, l_t = jnp.split(y_test, 2)
+        print("SV:", jnp.exp(x_t[1]))
+        print("l:", l_t)
+
+        dl = get_dldt(0.0, y_test, (S_F, 0.0))
+        print("dl/dt:", dl)
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
         file_name = "output_pmp_sing_and_batch.png"
@@ -224,7 +232,6 @@ if __name__ == "__main__":
         axes_lam[3].set_title('Adjoint for V')
         axes_lam[3].set_xlabel('Time (h)')
         axes_lam[3].grid(True)
-        
         file_name_lam = "output_lambdas_detail.png"
         output_path_lam = os.path.join(script_dir, file_name_lam)
         fig_lam.savefig(output_path_lam)
