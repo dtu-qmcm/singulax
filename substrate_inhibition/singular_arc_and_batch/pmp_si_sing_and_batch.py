@@ -117,8 +117,39 @@ if __name__ == "__main__":
             )
         y_at_t0 = sol_to_t0.ys[-1]
 
-        t_plot = jnp.concatenate([sol_to_tswitch.ts, sol_to_t0.ts])
-        y_plot = jnp.concatenate([sol_to_tswitch.ys, sol_to_t0.ys])
+        # Simulate forward (commented out — forward costate integration is unstable for this problem)
+        # sol1= diffeqsolve(
+        #     terms=diffrax.ODETerm(lambda t, y, args: vector_field(t, y, (S_F, get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max))))),
+        #     solver=diffrax.Kvaerno5(),
+        #     t0=0,
+        #     t1=t_switch,
+        #     dt0=0.01,
+        #     y0=y_at_t0,
+        #     stepsize_controller = diffrax.PIDController(rtol=1e-6, atol=1e-8),
+        #     max_steps=int(1e5),
+        #     saveat=diffrax.SaveAt(ts=jnp.linspace(0, t_switch, 500))
+        #     )
+
+        # sol2= diffeqsolve(
+        #     terms=diffrax.ODETerm(lambda t, y, args: vector_field(t, y, (S_F, 0.0))),
+        #     solver=diffrax.Kvaerno5(),
+        #     t0=t_switch,
+        #     t1=t_end,
+        #     dt0=0.01,
+        #     y0=sol1.ys[-1],
+        #     stepsize_controller = diffrax.PIDController(rtol=1e-6, atol=1e-8),
+        #     max_steps=int(1e5),
+        #     saveat=diffrax.SaveAt(ts=jnp.linspace(t_switch, t_end, 500))
+        #     )
+
+        # t_plot = jnp.concatenate([sol1.ts, sol2.ts])
+        # y_plot = jnp.concatenate([sol1.ys, sol2.ys])
+
+        # Backward simulation reversed to forward time order for plotting
+        # sol_to_t0:      ts from t_switch → 0  (singular arc, backward)
+        # sol_to_tswitch: ts from t_end → t_switch  (batch phase, backward)
+        t_plot = jnp.concatenate([sol_to_t0.ts[::-1], sol_to_tswitch.ts[::-1]])
+        y_plot = jnp.concatenate([sol_to_t0.ys[::-1], sol_to_tswitch.ys[::-1]])
 
         plt.style.use('seaborn-v0_8-whitegrid')
         plt.rcParams['font.family'] = 'serif'
@@ -237,3 +268,71 @@ if __name__ == "__main__":
         fig_lam.savefig(output_path_lam)
         plt.show()
 
+        # Compute rates along the trajectory
+        SV_plot = jnp.exp(y_plot[:, 1])
+        S_plot = SV_plot / y_plot[:, 3]
+        X_plot = y_plot[:, 0] / y_plot[:, 3]  # biomass concentration
+        from fedopt.si_kinetics import mu, pi, sigma
+        mu_plot    = jax.vmap(mu)(S_plot)
+        sigma_plot = jax.vmap(sigma)(S_plot)
+        pi_plot    = jax.vmap(pi)(S_plot)
+
+        fig, axes = plt.subplots(3, 1, figsize=(12, 10))
+
+        axes[0].plot(t_plot, mu_plot, color='black', label=r'$\mu(S)$')
+        axes[0].set_ylabel('Growth rate (1/h)')
+        axes[0].set_title('Specific growth rate')
+        axes[0].legend()
+        axes[0].grid(True)
+
+        axes[1].plot(t_plot, sigma_plot, color='black', label=r'$\sigma(S)$')
+        axes[1].set_ylabel('Uptake rate (1/h)')
+        axes[1].set_title('Specific substrate uptake rate')
+        axes[1].legend()
+        axes[1].grid(True)
+
+        axes[2].plot(t_plot, pi_plot, color='black', label=r'$\pi(S)$')
+        axes[2].set_ylabel('Production rate (1/h)')
+        axes[2].set_title('Specific product formation rate')
+        axes[2].legend()
+        axes[2].grid(True)
+
+        plt.tight_layout()
+        plt.show()
+
+# --- COSTATE EXPLOSION INVESTIGATION ---
+        # 1. Compute exact partial derivatives using JAX autodiff
+        grad_mu = jax.grad(mu)
+        grad_sigma = jax.grad(sigma)
+        grad_pi = jax.grad(pi)
+
+        # 2. Vectorize to evaluate along the entire time trajectory
+        dmu_dS_plot = jax.vmap(grad_mu)(S_plot)
+        dsigma_dS_plot = jax.vmap(grad_sigma)(S_plot)
+        dpi_dS_plot = jax.vmap(grad_pi)(S_plot)
+
+        # 3. Plot the derivatives
+        fig_grad, axes_grad = plt.subplots(3, 1, figsize=(12, 10))
+        fig_grad.suptitle('Partial Derivatives of Kinetics with respect to S', fontsize=20)
+
+        axes_grad[0].plot(t_plot, dmu_dS_plot, color='red', label=r'$\frac{\partial \mu}{\partial S}$')
+        axes_grad[0].set_ylabel('d(Growth)/dS')
+        axes_grad[0].set_title('Growth Rate Sensitivity')
+        axes_grad[0].legend()
+        axes_grad[0].grid(True)
+
+        axes_grad[1].plot(t_plot, dsigma_dS_plot, color='red', label=r'$\frac{\partial \sigma}{\partial S}$')
+        axes_grad[1].set_ylabel('d(Uptake)/dS')
+        axes_grad[1].set_title('Substrate Uptake Sensitivity')
+        axes_grad[1].legend()
+        axes_grad[1].grid(True)
+
+        axes_grad[2].plot(t_plot, dpi_dS_plot, color='red', label=r'$\frac{\partial \pi}{\partial S}$')
+        axes_grad[2].set_ylabel('d(Production)/dS')
+        axes_grad[2].set_title('Production Rate Sensitivity')
+        axes_grad[2].legend()
+        axes_grad[2].grid(True)
+        axes_grad[2].set_xlabel('Time (h)')
+
+        plt.tight_layout()
+        plt.show()
