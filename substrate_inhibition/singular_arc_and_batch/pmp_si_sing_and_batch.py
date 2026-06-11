@@ -336,3 +336,49 @@ if __name__ == "__main__":
 
         plt.tight_layout()
         plt.show()
+
+        # ── Batch phase forward/backward numerical comparison ──────────────────
+        # Forward integration starts from EXACTLY y_at_tswitch (the backward
+        # result at t_switch), so any initial-condition error is eliminated.
+        # We then compare step by step to see where/how fast the two diverge.
+        print("\n" + "=" * 70)
+        print("BATCH PHASE: forward vs backward comparison")
+        print("Forward IC = y_at_tswitch (exact backward result at t_switch)")
+        print("=" * 70)
+
+        sol_fwd_test = diffeqsolve(
+            terms=diffrax.ODETerm(lambda t, y, args: vector_field(t, y, (S_F, 0.0))),
+            solver=diffrax.Kvaerno5(),
+            t0=t_switch,
+            t1=t_end,
+            dt0=0.01,
+            y0=y_at_tswitch,
+            stepsize_controller=diffrax.PIDController(rtol=1e-6, atol=1e-8),
+            max_steps=int(1e5),
+            saveat=diffrax.SaveAt(ts=jnp.linspace(t_switch, t_end, 500))
+        )
+
+        # Backward batch reversed: index 0 = t_switch, index -1 = t_end
+        y_bwd_rev = sol_to_tswitch.ys[::-1]
+        y_fwd_tst = sol_fwd_test.ys
+        t_fwd_tst = sol_fwd_test.ts
+
+        # Verify starting point is identical
+        print(f"\nAt t_switch = {float(t_switch):.4f}:")
+        print(f"  λ₁ fwd start : {float(y_fwd_tst[0, 4]):.10e}  |  λ₁ bwd start : {float(y_bwd_rev[0, 4]):.10e}  |  diff : {abs(float(y_fwd_tst[0, 4]) - float(y_bwd_rev[0, 4])):.3e}")
+        print(f"  λ₂ fwd start : {float(y_fwd_tst[0, 5]):.10e}  |  λ₂ bwd start : {float(y_bwd_rev[0, 5]):.10e}  |  diff : {abs(float(y_fwd_tst[0, 5]) - float(y_bwd_rev[0, 5])):.3e}")
+
+        print(f"\n{'t':>7} | {'λ₁ fwd':>13} | {'λ₁ bwd':>13} | {'|Δλ₁|':>11} | {'λ₂ fwd':>13} | {'λ₂ bwd':>13} | {'|Δλ₂|':>11}")
+        print("-" * 100)
+        n_rows = 30
+        step = max(1, 500 // n_rows)
+        for i in range(0, 500, step):
+            l1_f = float(y_fwd_tst[i, 4])
+            l1_b = float(y_bwd_rev[i, 4])
+            l2_f = float(y_fwd_tst[i, 5])
+            l2_b = float(y_bwd_rev[i, 5])
+            print(f"{float(t_fwd_tst[i]):>7.4f} | {l1_f:>13.5e} | {l1_b:>13.5e} | {abs(l1_f-l1_b):>11.3e} | {l2_f:>13.5e} | {l2_b:>13.5e} | {abs(l2_f-l2_b):>11.3e}")
+
+        print(f"\nAt t_end = {float(t_end):.4f}:")
+        print(f"  λ₁ fwd : {float(y_fwd_tst[-1, 4]):.6e}  |  λ₁ bwd : {float(y_bwd_rev[-1, 4]):.6e}  (terminal cond: 0)")
+        print(f"  λ₂ fwd : {float(y_fwd_tst[-1, 5]):.6e}  |  λ₂ bwd : {float(y_bwd_rev[-1, 5]):.6e}  (terminal cond: 0)")
