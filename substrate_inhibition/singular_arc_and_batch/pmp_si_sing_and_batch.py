@@ -118,32 +118,32 @@ if __name__ == "__main__":
         y_at_t0 = sol_to_t0.ys[-1]
 
         # Simulate forward (commented out — forward costate integration is unstable for this problem)
-        # sol1= diffeqsolve(
-        #     terms=diffrax.ODETerm(lambda t, y, args: vector_field(t, y, (S_F, get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max))))),
-        #     solver=diffrax.Kvaerno5(),
-        #     t0=0,
-        #     t1=t_switch,
-        #     dt0=0.01,
-        #     y0=y_at_t0,
-        #     stepsize_controller = diffrax.PIDController(rtol=1e-6, atol=1e-8),
-        #     max_steps=int(1e5),
-        #     saveat=diffrax.SaveAt(ts=jnp.linspace(0, t_switch, 500))
-        #     )
+        sol1= diffeqsolve(
+            terms=diffrax.ODETerm(lambda t, y, args: vector_field(t, y, (S_F, get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max))))),
+            solver=diffrax.Kvaerno5(),
+            t0=0,
+            t1=t_switch,
+            dt0=0.01,
+            y0=y_at_t0,
+            stepsize_controller = diffrax.PIDController(rtol=1e-6, atol=1e-8),
+            max_steps=int(1e5),
+            saveat=diffrax.SaveAt(ts=jnp.linspace(0, t_switch, 500))
+            )
 
-        # sol2= diffeqsolve(
-        #     terms=diffrax.ODETerm(lambda t, y, args: vector_field(t, y, (S_F, 0.0))),
-        #     solver=diffrax.Kvaerno5(),
-        #     t0=t_switch,
-        #     t1=t_end,
-        #     dt0=0.01,
-        #     y0=sol1.ys[-1],
-        #     stepsize_controller = diffrax.PIDController(rtol=1e-6, atol=1e-8),
-        #     max_steps=int(1e5),
-        #     saveat=diffrax.SaveAt(ts=jnp.linspace(t_switch, t_end, 500))
-        #     )
-
-        # t_plot = jnp.concatenate([sol1.ts, sol2.ts])
-        # y_plot = jnp.concatenate([sol1.ys, sol2.ys])
+        sol2= diffeqsolve(
+            terms=diffrax.ODETerm(lambda t, y, args: vector_field(t, y, (S_F, 0.0))),
+            solver=diffrax.Kvaerno5(),
+            t0=t_switch,
+            t1=t_end,
+            dt0=0.01,
+            y0=sol1.ys[-1],
+            stepsize_controller = diffrax.PIDController(rtol=1e-6, atol=1e-8),
+            max_steps=int(1e5),
+            saveat=diffrax.SaveAt(ts=jnp.linspace(t_switch, t_end, 500))
+            )
+        
+        #t_plot = jnp.concatenate([sol1.ts, sol2.ts])
+        #y_plot = jnp.concatenate([sol1.ys, sol2.ys])
 
         # Backward simulation reversed to forward time order for plotting
         # sol_to_t0:      ts from t_switch → 0  (singular arc, backward)
