@@ -1,12 +1,14 @@
 """
-Full forward simulation of the PMP optimal trajectory using multiple shooting.
+Full forward simulation using proper multiple shooting.
 
-The backward shooting solution is used to initialise the shooting nodes.
-Multiple shooting limits the per-segment error amplification to e^{λ·T/N}
-instead of e^{λ·T} for the full interval.
+Workflow (mirrors the boc.multiple_shooting pattern):
+ 1. Define shooting nodes in time
+ 2. Initialise all node values from the backward reference solution
+ 3. Minimise continuity residuals with BFGS  (optx.minimise)
+ 4. Reconstruct the full trajectory by integrating forward segment by segment
 
-Singular arc (0 → t_switch):  N_sing  = 200 segments, F = F_sin(y)
-Batch phase  (t_switch → t_end): N_batch = 100 segments, F = 0
+The combined vector field switches automatically between the singular arc
+(F = F_sin(y)) and the batch phase (F = 0) at t_switch.
 """
 
 import jax
@@ -17,7 +19,6 @@ import optimistix as optx
 import matplotlib.pyplot as plt
 import os
 from diffrax import ODETerm, Kvaerno5, SaveAt, diffeqsolve, PIDController
-from scipy.integrate import solve_ivp
 
 from fedopt.odes import vector_field
 from fedopt.si_analytical import states_analytical_sol, volume_cond
@@ -26,38 +27,18 @@ from fedopt.Fsin import get_Fsin_unconstrained
 
 jax.config.update("jax_enable_x64", True)
 
-Ks, Ki  = 0.1, 100.0
-S0      = jnp.sqrt(Ks * Ki)
-y0      = jnp.array([10.0, jnp.log(S0), 0.0, 1.0])
-S_F     = 150.0
-V_max   = 4.0
-F_max   = 2.0
-F_min   = 0.0
-t_end   = 9.0
+# ── Parameters ────────────────────────────────────────────────────────────────
+Ks, Ki     = 0.1, 100.0
+S0         = jnp.sqrt(Ks * Ki)
+y0         = jnp.array([10.0, jnp.log(S0), 0.0, 1.0])
+S_F        = 150.0
+V_max      = 4.0
+F_max      = 2.0
+F_min      = 0.0
+t_end      = 9.0
+num_states = 8
 
-@jax.jit
-def _rhs_sing(t, y_jax):
-    F = get_Fsin_unconstrained(y_jax, (S_F, V_max, F_min, F_max))
-    return vector_field(t, y_jax, (S_F, F))
-
-@jax.jit
-def _rhs_batch(t, y_jax):
-    return vector_field(t, y_jax, (S_F, 0.0))
-
-def vf_sing_np(t, y):
-    return np.array(_rhs_sing(t, jnp.array(y)))
-
-def vf_batch_np(t, y):
-    return np.array(_rhs_batch(t, jnp.array(y)))
-
-# ── Helper: forward-integrate one segment with scipy ─────────────────────────
-def fwd_segment(vf_np, y_start, t0, t1, n_save=6):
-    sol = solve_ivp(vf_np, [t0, t1], np.array(y_start),
-                    method='RK45', rtol=1e-8, atol=1e-10,
-                    t_eval=np.linspace(t0, t1, n_save))
-    return sol.t, sol.y.T
-
-# ── Step 1: analytical solution → t_switch and x_tf ─────────────────────────
+# ── Step 1: analytical solution → t_switch, x_tf ─────────────────────────────
 print("Step 1 — analytical solution ...")
 root_finder = optx.Newton(1e-5, 1e-5, optx.rms_norm)
 event       = diffrax.Event(volume_cond, root_finder)
@@ -69,14 +50,13 @@ sol_event = diffeqsolve(
     args=(S_F, V_max)
 )
 t_switch = float(sol_event.ts.squeeze())
-print(f"  t_switch = {t_switch:.4f} h,  batch phase = {t_end - t_switch:.4f} h")
+print(f"  t_switch = {t_switch:.4f} h")
 
 sol_sing_ana = diffeqsolve(
     ODETerm(states_analytical_sol), Kvaerno5(),
     t0=0, t1=t_switch, dt0=0.01, y0=y0,
     stepsize_controller=PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10),
-    saveat=SaveAt(ts=jnp.linspace(0.0, t_switch, 300)),
-    args=(S_F, V_max)
+    saveat=SaveAt(ts=jnp.linspace(0.0, t_switch, 300)), args=(S_F, V_max)
 )
 sol_batch_ana = diffeqsolve(
     ODETerm(states_analytical_sol), Kvaerno5(),
@@ -89,138 +69,180 @@ x_tf = sol_batch_ana.ys[-1]
 
 # ── Step 2: backward shooting → l4_tf ────────────────────────────────────────
 print("Step 2 — backward shooting ...")
-opt = optx.minimise(
+opt_bwd = optx.minimise(
     fn=loss_fn_batch, solver=optx.BFGS(rtol=1e-5, atol=1e-6), y0=-0.1,
     args=(t_end, y0, S_F, x_tf, t_switch, V_max, F_min, F_max), max_steps=500
 )
-l4_tf    = opt.value
+l4_tf    = opt_bwd.value
 y_tf_opt = jnp.array([x_tf[0], x_tf[1], x_tf[2], x_tf[3], 0.0, 0.0, 1.0, l4_tf])
 print(f"  l4_tf = {float(l4_tf):.6f}")
 
-# ── Step 3: backward integration (reference trajectories) ────────────────────
-print("Step 3 — backward integration ...")
+# ── Step 3: backward integration → reference trajectories ────────────────────
+print("Step 3 — backward integration (reference) ...")
 REF_PTS = 600
 
-# Batch phase: t_end → t_switch
 sol_bwd_batch = diffeqsolve(
     ODETerm(lambda t, y, args: vector_field(t, y, (S_F, 0.0))),
     Kvaerno5(), t0=t_end, t1=t_switch, dt0=-0.01, y0=y_tf_opt,
     stepsize_controller=PIDController(rtol=1e-8, atol=1e-10),
-    max_steps=int(1e5),
-    saveat=SaveAt(ts=jnp.linspace(t_end, t_switch, REF_PTS))
+    max_steps=int(1e5), saveat=SaveAt(ts=jnp.linspace(t_end, t_switch, REF_PTS))
 )
 y_at_tswitch = sol_bwd_batch.ys[-1]
 
-# Singular arc: t_switch → 0
 sol_bwd_sing = diffeqsolve(
     ODETerm(lambda t, y, args: vector_field(t, y, (S_F, get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max))))),
     Kvaerno5(), t0=t_switch, t1=0.0, dt0=-0.01, y0=y_at_tswitch,
     stepsize_controller=PIDController(rtol=1e-8, atol=1e-10),
-    max_steps=int(1e5),
-    saveat=SaveAt(ts=jnp.linspace(t_switch, 0.0, REF_PTS))
+    max_steps=int(1e5), saveat=SaveAt(ts=jnp.linspace(t_switch, 0.0, REF_PTS))
 )
 y_at_t0 = sol_bwd_sing.ys[-1]
 
-# Reverse both to forward time order
-t_ref_sing  = np.array(sol_bwd_sing.ts[::-1])   # 0 → t_switch
+t_ref_sing  = np.array(sol_bwd_sing.ts[::-1])
 y_ref_sing  = np.array(sol_bwd_sing.ys[::-1])
-t_ref_batch = np.array(sol_bwd_batch.ts[::-1])  # t_switch → t_end
+t_ref_batch = np.array(sol_bwd_batch.ts[::-1])
 y_ref_batch = np.array(sol_bwd_batch.ys[::-1])
 
-print(f"  λ₁(t=0)       = {float(y_at_t0[4]):.6e}")
-print(f"  λ₂(t=0)       = {float(y_at_t0[5]):.6e}")
-print(f"  λ₂(t_switch)  = {float(y_at_tswitch[5]):.6e}")
-print(f"  λ₂(t_end)     = {float(y_tf_opt[5]):.6e}  (terminal condition)")
+# ── Step 4: shooting node layout ─────────────────────────────────────────────
+# Singular arc: 5 segments  (low instability — few nodes suffice)
+# Batch phase:  50 segments (per-segment amplification e^{641 × 0.012} ≈ 2300;
+#               still manageable given the near-exact backward initialisation)
+sing_nodes  = np.linspace(0.0, t_switch, 6)
+batch_nodes = np.linspace(t_switch, t_end, 51)[1:]   # drop duplicate t_switch
+shooting_nodes = np.concatenate([sing_nodes, batch_nodes])
 
-# ── Step 4: multiple shooting — singular arc (0 → t_switch) ──────────────────
-N_sing      = 200
-print(f"\nStep 4 — multiple shooting: singular arc (N={N_sing}) ...")
-seg_ts_sing = np.linspace(0.0, t_switch, N_sing + 1)
+num_segments = len(shooting_nodes) - 1   # 55
+num_nodes    = len(shooting_nodes)        # 56
 
-nodes_sing         = np.zeros((N_sing + 1, 8))
-nodes_sing[0]      = np.array(y_at_t0)
-nodes_sing[N_sing] = np.array(y_at_tswitch)
-for k in range(1, N_sing):
-    idx = int(np.argmin(np.abs(t_ref_sing - seg_ts_sing[k])))
-    nodes_sing[k] = y_ref_sing[idx]
+dt_batch = (t_end - t_switch) / 50
+print(f"\nShooting nodes: {num_nodes}  ({num_segments} segments)")
+print(f"  Singular arc  : 5 segments × {t_switch/5:.2f} h")
+print(f"  Batch phase   : 50 segments × {dt_batch:.4f} h  (amplif/seg ≈ {np.exp(641*dt_batch):.1e})")
 
-_ts_sing, _ys_sing = [], []
-for k in range(N_sing):
-    ts_k, ys_k = fwd_segment(vf_sing_np, nodes_sing[k],
-                              seg_ts_sing[k], seg_ts_sing[k + 1])
-    _ts_sing.append(ts_k)
-    _ys_sing.append(ys_k)
+# ── Step 5: initialise node values from the backward reference ────────────────
+params0 = np.zeros((num_nodes, num_states))
+params0[0]  = np.array(y_at_t0)
+params0[-1] = np.array(y_tf_opt)
 
-t_ms_sing = np.concatenate(_ts_sing)
-y_ms_sing = np.concatenate(_ys_sing, axis=0)
+for k in range(1, num_nodes - 1):
+    tk = shooting_nodes[k]
+    if tk <= t_switch + 1e-12:
+        idx = int(np.argmin(np.abs(t_ref_sing - tk)))
+        params0[k] = y_ref_sing[idx]
+    else:
+        idx = int(np.argmin(np.abs(t_ref_batch - tk)))
+        params0[k] = y_ref_batch[idx]
 
-gap_sing = np.max(np.abs(y_ms_sing[-1] - np.array(y_at_tswitch)))
-print(f"  Junction error at t_switch (max over state+costate): {gap_sing:.3e}")
-print(f"  λ₁(t_switch) MS={y_ms_sing[-1, 4]:.6e}  ref={float(y_at_tswitch[4]):.6e}")
-print(f"  λ₂(t_switch) MS={y_ms_sing[-1, 5]:.6e}  ref={float(y_at_tswitch[5]):.6e}")
+params0_flat = jnp.array(params0.flatten())
+print(f"\nparams0 shape: {params0.shape}  →  flat dim = {len(params0_flat)}")
 
-# ── Step 5: multiple shooting — batch phase (t_switch → t_end) ───────────────
-N_batch      = 100
-print(f"\nStep 5 — multiple shooting: batch phase (N={N_batch}) ...")
-seg_ts_batch = np.linspace(t_switch, t_end, N_batch + 1)
+# ── Step 6: combined vector field and continuity loss ────────────────────────
+# t_switch is a Python float here — captured as a static constant in the
+# closure so that JAX sees it as concrete at trace time.
+_t_switch = t_switch
+_t_pairs  = [(float(shooting_nodes[k]), float(shooting_nodes[k + 1]))
+             for k in range(num_segments)]
 
-nodes_batch          = np.zeros((N_batch + 1, 8))
-nodes_batch[0]       = np.array(y_at_tswitch)
-nodes_batch[N_batch] = np.array(y_tf_opt)
-for k in range(1, N_batch):
-    idx = int(np.argmin(np.abs(t_ref_batch - seg_ts_batch[k])))
-    nodes_batch[k] = y_ref_batch[idx]
+def vf_full(t, y, args):
+    """Single vector field for the whole trajectory; switches at t_switch."""
+    F_sin = get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max))
+    F     = jnp.where(t < _t_switch, F_sin, 0.0)
+    return vector_field(t, y, (S_F, F))
 
-_ts_batch, _ys_batch = [], []
-for k in range(N_batch):
-    ts_k, ys_k = fwd_segment(vf_batch_np, nodes_batch[k],
-                              seg_ts_batch[k], seg_ts_batch[k + 1])
-    _ts_batch.append(ts_k)
-    _ys_batch.append(ys_k)
+def loss_fn_ms(params, args):
+    """Sum of squared continuity gaps + boundary condition penalties."""
+    y_ic, y_tc = args
+    nodes = params.reshape(num_nodes, num_states)
 
-t_ms_batch = np.concatenate(_ts_batch)
-y_ms_batch = np.concatenate(_ys_batch, axis=0)
+    # Fixed boundary conditions (initial + terminal)
+    total = 1e4 * jnp.sum((nodes[0]  - y_ic) ** 2)
+    total = total + 1e4 * jnp.sum((nodes[-1] - y_tc) ** 2)
 
-gap_batch = np.max(np.abs(y_ms_batch[-1] - np.array(y_tf_opt)))
-print(f"  Junction error at t_end (max over state+costate):    {gap_batch:.3e}")
-print(f"  λ₂(t_end) MS={y_ms_batch[-1, 5]:.6e}  expected=0.0")
+    # Continuity at each segment junction
+    for k in range(num_segments):
+        t0, t1 = _t_pairs[k]
+        sol = diffeqsolve(
+            ODETerm(vf_full), Kvaerno5(),
+            t0=t0, t1=t1, dt0=0.01, y0=nodes[k],
+            stepsize_controller=PIDController(rtol=1e-6, atol=1e-8),
+            max_steps=int(2e4), saveat=SaveAt(t1=True), args=()
+        )
+        total = total + jnp.sum((sol.ys[-1] - nodes[k + 1]) ** 2)
 
-# ── Assemble full trajectory ──────────────────────────────────────────────────
-t_ms_full = np.concatenate([t_ms_sing, t_ms_batch])
-y_ms_full = np.concatenate([y_ms_sing, y_ms_batch], axis=0)
+    return total
+
+# ── Step 7: BFGS optimisation ─────────────────────────────────────────────────
+print("\nStep 4 — BFGS optimisation (continuity minimisation) ...")
+print("  (first call triggers JAX compilation — may take a moment)")
+ms_args = (jnp.array(y_at_t0), jnp.array(y_tf_opt))
+
+initial_loss = float(loss_fn_ms(params0_flat, ms_args))
+print(f"  Initial loss : {initial_loss:.4e}")
+
+opt_ms = optx.minimise(
+    fn=loss_fn_ms,
+    solver=optx.BFGS(rtol=1e-6, atol=1e-8),
+    y0=params0_flat,
+    args=ms_args,
+    max_steps=200
+)
+params_star = opt_ms.value
+final_loss  = float(loss_fn_ms(params_star, ms_args))
+print(f"  Final loss   : {final_loss:.4e}")
+print(f"  Solver stats : {opt_ms.stats}")
+
+# ── Step 8: reconstruct trajectory from optimal nodes ────────────────────────
+print("\nStep 5 — reconstructing trajectory ...")
+optimal_nodes = np.array(params_star).reshape(num_nodes, num_states)
+
+all_ts, all_ys = [], []
+for i in range(num_segments):
+    t0_i   = float(shooting_nodes[i])
+    t1_i   = float(shooting_nodes[i + 1])
+    t_plot = jnp.linspace(t0_i, t1_i, 10)
+
+    sol_seg = diffeqsolve(
+        ODETerm(vf_full), Kvaerno5(),
+        t0=t0_i, t1=t1_i, dt0=0.01, y0=jnp.array(optimal_nodes[i]),
+        stepsize_controller=PIDController(rtol=1e-8, atol=1e-10),
+        max_steps=int(2e4), saveat=SaveAt(ts=t_plot), args=()
+    )
+    all_ts.append(np.array(sol_seg.ts))
+    all_ys.append(np.array(sol_seg.ys))
+
+t_full = np.concatenate(all_ts)
+y_full = np.concatenate(all_ys, axis=0)
 
 t_ref_full = np.concatenate([t_ref_sing, t_ref_batch])
 y_ref_full = np.concatenate([y_ref_sing, y_ref_batch], axis=0)
 
+print(f"  λ₂(t_end) forward = {y_full[-1, 5]:.4e}  (expected 0)")
+
 # ── Plot ──────────────────────────────────────────────────────────────────────
 fig, axes = plt.subplots(4, 1, figsize=(12, 14))
 fig.suptitle(
-    f'Full forward simulation — multiple shooting\n'
-    f'Singular arc: N={N_sing},  Batch: N={N_batch}',
+    f'Full forward simulation — multiple shooting (BFGS optimised)\n'
+    f'{num_nodes} nodes  |  5 singular-arc + 50 batch segments',
     fontsize=14
 )
 
-plot_cfg = [
-    (4, r'$\lambda_1$'),
-    (5, r'$\lambda_2$'),
-    (6, r'$\lambda_3$'),
-    (7, r'$\lambda_4$'),
-]
+costate_cfg = [(4, r'$\lambda_1$'), (5, r'$\lambda_2$'),
+               (6, r'$\lambda_3$'), (7, r'$\lambda_4$')]
 
-for ax, (idx, lbl) in zip(axes, plot_cfg):
+for ax, (idx, lbl) in zip(axes, costate_cfg):
     ax.plot(t_ref_full, y_ref_full[:, idx], 'k-', lw=2.5,
-            label=f'{lbl} backward (reference)', zorder=6)
-    ax.plot(t_ms_full,  y_ms_full[:,  idx], 'r--', lw=1.5,
+            label=f'{lbl} backward ref', zorder=6)
+    ax.plot(t_full,     y_full[:,     idx], 'r--', lw=1.5,
             label=f'{lbl} forward MS')
-    ax.axvline(t_switch, color='steelblue', linestyle=':', lw=1.2,
-               label='t_switch')
+    ax.scatter(shooting_nodes, optimal_nodes[:, idx],
+               s=15, color='steelblue', zorder=7, label='shooting nodes')
+    ax.axvline(t_switch, color='gray', linestyle=':', lw=1.2)
     ax.set_ylabel(lbl, fontsize=11)
-    ax.legend(fontsize=9, loc='upper left')
+    ax.legend(fontsize=9)
     ax.grid(True)
 
 axes[-1].set_xlabel('Time (h)', fontsize=11)
-
 plt.tight_layout()
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
 out = os.path.join(script_dir, 'output_forward_ms_full.png')
 plt.savefig(out, dpi=120, bbox_inches='tight')
