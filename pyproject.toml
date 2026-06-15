@@ -25,6 +25,7 @@ dependencies = [
     "sundials4py>=7.7.0",
     "pyproject-toml>=0.1.0",
     "pyqt5>=5.15.11",
+    "sympy>=1.14.0",
 ]
 
 [build-system]
