@@ -14,6 +14,7 @@ from fedopt.Fsin import get_Fsin_unconstrained, get_Fsin
 jax.config.update("jax_enable_x64", True)
 
 S0 = 1e-6
+F_min = 0.0
 F_max = 2.0
 y0 = jnp.array([10, jnp.log(S0 * 1.0), 0., 1.])
 S_F = 150
@@ -28,8 +29,9 @@ def solve_and_get_residuals(guess, args):
     x_tf_guess, t1_guess, l4_tf_guess = guess
     S_F, Fmin, Fmax, V_max, x0, tf = args
     y_tf = jnp.array([x_tf_guess[0], x_tf_guess[1], x_tf_guess[2], V_max, 0.0, 0.0, 1.0, l4_tf_guess])
-    solver = diffrax.Kvaerno5()
-    stepsize_controller = diffrax.PIDController(rtol=1e-12, atol=1e-12)
+    solver = diffrax.Dopri8()
+    sc_batch   = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10)
+    sc_regular = diffrax.PIDController(rtol=1e-8, atol=1e-8)
     root_finder = optx.Newton(1e-5, 1e-5, optx.rms_norm)
     event = diffrax.Event(phi_cond, root_finder)
     sol_full = diffrax.diffeqsolve(
@@ -39,11 +41,12 @@ def solve_and_get_residuals(guess, args):
         y0=y_tf,
         t0=tf,
         t1=0.0,
-        dt0=-0.01,
+        dt0=-1e-6,
         saveat=diffrax.SaveAt(t1=True),
-        stepsize_controller=stepsize_controller,
+        stepsize_controller=sc_batch,
         max_steps=int(1e6),
         event=event,
+        throw=False,
     )
     t_full = sol_full.ts[-1]
     y_at_t_full = sol_full.ys[-1]
@@ -57,8 +60,9 @@ def solve_and_get_residuals(guess, args):
         t1=t1_guess,
         dt0=-0.01,
         saveat=diffrax.SaveAt(t1=True),
-        stepsize_controller=stepsize_controller,
+        stepsize_controller=sc_regular,
         max_steps=int(1e6),
+        throw=False,
     )
     y_at_t1 = sol_singular.ys[-1]
 
@@ -71,8 +75,9 @@ def solve_and_get_residuals(guess, args):
         t1=0.0,
         dt0=-0.01,
         saveat=diffrax.SaveAt(t1=True),
-        stepsize_controller=stepsize_controller,
-        max_steps=int(1e6)
+        stepsize_controller=sc_regular,
+        max_steps=int(1e6),
+        throw=False,
     )
     y_at_t0 = sol_bang.ys[-1]
 
@@ -88,3 +93,31 @@ def solve_and_get_residuals(guess, args):
         y_at_t0[2] - x0[2],
         y_at_t0[3] - x0[3]
                      ])
+def loss_fn(guess, args):
+    res = solve_and_get_residuals(guess, args)
+    return jnp.sum(res**2)
+
+direct = np.load('direct_si_opt.npy')
+x_tf_guess = direct[:3]   # [XV_tf, log(SV_tf), PV_tf]
+t1_guess   = direct[4]
+l4_tf_guess = -16.0       # manual guess, tune if needed
+guess = (x_tf_guess, t1_guess, l4_tf_guess)
+args =  S_F, F_min, F_max, V_max, y0, t_end
+
+
+if __name__ == "__main__":
+    print("=== Optimal Control Optimization ===\n")
+
+    solver = optx.BFGS(rtol=1e-5, atol=1e-6)
+    print("\nStarting optimization")
+    solution = optx.minimise(
+        fn = loss_fn,
+        solver=solver,
+        y0=guess,
+        args=args,
+        max_steps=500
+    )
+    
+    if solution is not None:
+        optimal_guess = solution.value
+        print("Optimal solution found!:", optimal_guess)
