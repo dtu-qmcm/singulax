@@ -18,7 +18,7 @@ def mu(S):
     """
     mu_max = 0.3
     Ks = 0.1
-    Ki = 100
+    Ki = 100.0
     mu_val = (mu_max * S) / (Ks + S + S**2/Ki)
 
     return mu_val
