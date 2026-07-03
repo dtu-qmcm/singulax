@@ -26,9 +26,6 @@ sigma_star = float(sigma(jnp.array(S_star)))
 n_knots    = 10
 knot_times = jnp.linspace(0.0, t_f, n_knots)
 
-# fixed = (S_F, V_max, F_max, t_f)
-# opt_vars = [t1, F0, F1, ..., F9]   ← flat array scipy optimizes
-
 def get_F(t, t1, F_knots, F_max):
     cs = interpax.CubicSpline(knot_times, F_knots, check=False)
     F_sing = jnp.clip(cs(t), 0.0, F_max)
