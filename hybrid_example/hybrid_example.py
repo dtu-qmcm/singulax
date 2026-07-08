@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from scipy.optimize import minimize
+import diffrax
 
 jax.config.update("jax_enable_x64", True)
 
@@ -130,3 +131,4 @@ if __name__ == "__main__":
 
     plt.tight_layout()
     plt.show()
+
