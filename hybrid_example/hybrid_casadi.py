@@ -19,19 +19,40 @@ U = opti.variable(1, N)
 # Initial conditions
 opti.subject_to(X[:, 0] == [0, 0, 0, 0])
 
-# Forward Euler Dynamics 
-for k in range(N):
-    c = ca.cos(X[0, k])
-    s = ca.sin(X[0, k])
+def get_dx(x, u):
+    """
+    Computes the state derivatives (dx/dt) using CasADi symbolic variables.
+    """
+    x1 = x[0]
+    x2 = x[1]
+    x3 = x[2]
+    x4 = x[3]
+    
+    # Paper's constants and trigonometric terms
+    c = ca.cos(x1)
+    s = ca.sin(x1)
     e = 0.5
     D = 1 - e * c**2
     
-    F2 = -((e * X[1, k]**2 * c + s + c * U[0, k]) / D)
-    F4 = -((e * s * (X[1, k]**2 + c) + U[0, k]) / D)
+    # F2 and F4 based on Example 1
+    F2 = -((e * x2**2 * c + s + c * u) / D)
+    F4 = -((e * s * (x2**2 + c) + u) / D)
     
-    dx = ca.vertcat(X[1, k], F2, X[3, k], -F4)
+    # The state derivatives (remembering the -F4 correction!)
+    dx1 = x2
+    dx2 = F2
+    dx3 = x4
+    dx4 = -F4
     
-    # Collocation constraint: x_{k+1} = x_k + h * dx
+    # Return as a CasADi vertical vector
+    return ca.vertcat(dx1, dx2, dx3, dx4)
+
+
+# Forward Euler Dynamics 
+for k in range(N):
+    # Euler constraint: x_{k+1} - (x_k + h * f(x_k, u_k)) = 0
+    # THIS is what the paper uses for Stage 1
+    dx = get_dx(X[:, k], U[:, k])
     opti.subject_to(X[:, k+1] == X[:, k] + h * dx)
 
 # Control Bounds
