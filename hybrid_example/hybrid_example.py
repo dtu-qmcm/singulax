@@ -13,8 +13,8 @@ def F_calc(x, args):
     e = 0.5
     D  = 1-e*c**2
 
-    F2 = -(e*x2**2*c + s+ c*u)/D
-    F4 = -(e*s*(x2**2 + c)+ u)/ D
+    F2 = -((e*x2**2*s*c + s + c*u)/D)
+    F4 = ((e*s*(x2**2 + c) + u)/D)
 
     return jnp.array([F2, F4])
 
@@ -45,7 +45,7 @@ def switching_fn(x, l):
     c = jnp.cos(x1)
     e = 0.5
     D = 1 - e*c**2
-    return -(c*l[1] + l[3]) / D
+    return (-c*l[1] - l[3]) / D
 
 def costate_ode(x, u, lam):
     return -jax.grad(hamiltonian, argnums=0)(x, u, lam)
@@ -71,8 +71,7 @@ def simulate(u_vec):
     x_final, _ = jax.lax.scan(step, jnp.zeros(4), u_vec)
     return x_final
 
-def objective(v_vec, args):
-    u_vec = jnp.tanh(v_vec)
+def objective(u_vec, args):
     x_final = simulate(u_vec)
     diff = x_final - xf
     return 0.5 * jnp.dot(diff, diff)
@@ -85,16 +84,21 @@ xf = jnp.array([jnp.pi, 0.0, 0.0, 0.0])
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    obj_jit  = jax.jit(lambda v: objective(v, None))
-    grad_jit = jax.jit(jax.grad(lambda v: objective(v, None)))
-    result = scipy.optimize.minimize(
-        fun    = lambda v: np.array(obj_jit(jnp.array(v))),
-        jac    = lambda v: np.array(grad_jit(jnp.array(v))),
-        x0     = np.zeros(N),
-        method = ipyopt.optimize.ipopt,
-        constraints = jnp.array([-1.0, 1.0])
-    )
-    u_opt = np.tanh(result.x)
+    obj_jit  = jax.jit(lambda u: objective(u, None))
+    grad_jit = jax.jit(jax.grad(lambda u: objective(u, None)))
+
+    result = minimize(
+        fun    = lambda u: float(obj_jit(jnp.array(u))),
+        jac    = lambda u: np.array(grad_jit(jnp.array(u))),
+        x0     = np.zeros(N), # initial guess of u
+        bounds = [(-1.0, 1.0)] * N,
+        method = 'L-BFGS-B',
+        # options = {'maxiter': 50000, 'ftol': 1e-15, 'gtol': 1e-10},
+        )
+    u_opt = result.x
+
+    print("x(tf) =", np.array(simulate(jnp.array(u_opt))))
+    print("J     =", result.fun)
 
     def simulate_all(u_vec):
         def step(x, u):
@@ -109,15 +113,15 @@ if __name__ == "__main__":
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
 
-    ax1.plot(t, x_hist[:, 0], label='x1')
-    ax1.plot(t, x_hist[:, 1], label='x2')
-    ax1.plot(t, x_hist[:, 2], label='x3')
-    ax1.plot(t, x_hist[:, 3], label='x4')
+    ax1.plot(t, x_hist[:, 0], color='black',  linestyle='-',   label='x1')
+    ax1.plot(t, x_hist[:, 1], color='red',    linestyle='--',  label='x2')
+    ax1.plot(t, x_hist[:, 2], color='green',  linestyle=':',   label='x3')
+    ax1.plot(t, x_hist[:, 3], color='blue',   linestyle='--',  label='x4')
     ax1.set_xlabel('t')
     ax1.set_title('Stage 1: states')
     ax1.legend()
 
-    ax2.plot(t, u_opt)
+    ax2.plot(t, u_opt, color = 'red')
     ax2.axhline( 1, color='k', linestyle='--', linewidth=0.8)
     ax2.axhline(-1, color='k', linestyle='--', linewidth=0.8)
     ax2.set_xlabel('t')
