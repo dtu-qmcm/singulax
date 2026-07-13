@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from scipy.optimize import minimize
+from cyipopt import minimize_ipopt
 import diffrax
 
 jax.config.update("jax_enable_x64", True)
@@ -23,7 +24,7 @@ def states_ode(x, args):
     x1, x2, x3, x4 = x[0], x[1], x[2], x[3]
     Fs = F_calc(x, args)
     F2, F4 = Fs[0], Fs[1]
-    
+
     dx1_dt = x2
     dx2_dt = F2
     dx3_dt = x4
@@ -59,7 +60,7 @@ def u_sing(x, l, t):
     e = 0.5
     D  = 1-e*c**2
     S = jnp.sin(2*x1)
-    
+
     A = ((2-2*e-D)*c*x2**2-2*s**2+D)/(S)
     B = (D*x2*l1)/(c*l2)
     u_sin = A - B
@@ -88,14 +89,13 @@ if __name__ == "__main__":
     obj_jit  = jax.jit(lambda u: objective(u, None))
     grad_jit = jax.jit(jax.grad(lambda u: objective(u, None)))
 
-    result = minimize(
+    result = minimize_ipopt(
         fun    = lambda u: float(obj_jit(jnp.array(u))),
         jac    = lambda u: np.array(grad_jit(jnp.array(u))),
-        x0     = np.zeros(N), # initial guess of u
+        x0     = np.zeros(N),
         bounds = [(-1.0, 1.0)] * N,
-        method = 'L-BFGS-B',
-        # options = {'maxiter': 50000, 'ftol': 1e-15, 'gtol': 1e-10},
-        )
+        options = {'max_iter': 300, 'tol': 1e-6},
+    )
     u_opt = result.x
 
     print("x(tf) =", np.array(simulate(jnp.array(u_opt))))
@@ -131,4 +131,3 @@ if __name__ == "__main__":
 
     plt.tight_layout()
     plt.show()
-
