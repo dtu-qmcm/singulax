@@ -78,6 +78,11 @@ def objective(u_vec, args):
     diff = x_final - xf
     return 0.5 * jnp.dot(diff, diff)
 
+def J_from_x0(x0):
+    def step(x, u): return x + h * states_ode(x, u), None
+    x_final, _ = jax.lax.scan(step, x0, u_opt_jnp)
+    return 0.5 * jnp.dot(x_final - xf, x_final - xf)
+
 N = 1000
 t_f = 4.912
 h = t_f / N
@@ -112,7 +117,17 @@ if __name__ == "__main__":
     x_hist = np.array(simulate_all(jnp.array(u_opt)))
     t = np.linspace(0, t_f, N)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+    u_opt_jnp = jnp.array(u_opt)
+
+    def J_from_x0(x0):
+        def step(x, u): return x + h * states_ode(x, u), None
+        x_final, _ = jax.lax.scan(step, x0, u_opt_jnp)
+        return 0.5 * jnp.dot(x_final - xf, x_final - xf)
+
+    lam0 = jax.grad(J_from_x0)(jnp.zeros(4))
+    print("λ(0) =", np.array(lam0))
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 4))
 
     ax1.plot(t, x_hist[:, 0], color='black',  linestyle='-',   label='x1')
     ax1.plot(t, x_hist[:, 1], color='red',    linestyle='--',  label='x2')
