@@ -322,12 +322,12 @@ if __name__ == "__main__":
     ax1.plot(t, X_opt[:, 1], "r--", label="x2")
     ax1.plot(t, X_opt[:, 2], "g:", label="x3")
     ax1.plot(t, X_opt[:, 3], "b--", label="x4")
-    ax1.set_xlabel("t"); ax1.set_title("states"); ax1.legend()
+    ax1.set_xlabel("t"); ax1.set_title("States (x)"); ax1.legend()
 
     ax2.plot(t_u, U_opt, "r")
     ax2.axhline(1, color="k", ls="--", lw=0.8)
     ax2.axhline(-1, color="k", ls="--", lw=0.8)
-    ax2.set_xlabel("t"); ax2.set_ylabel("u"); ax2.set_title("STAGE 1: Direct Approach")
+    ax2.set_xlabel("t"); ax2.set_ylabel("u"); ax2.set_title("Control (u)")
     for tsw in ts_guess:
         ax2.axvline(tsw, color="b", ls=":", lw=1)
 
@@ -335,11 +335,12 @@ if __name__ == "__main__":
     ax3.plot(t_lam, lam[:, 1], "r--", label="λ2")
     ax3.plot(t_lam, lam[:, 2], "b:", label="λ3")
     ax3.plot(t_lam, lam[:, 3], "k--", label="λ4")
-    ax3.set_xlabel("t"); ax3.set_title("costates (= -mult_g)"); ax3.legend()
-
+    ax3.set_xlabel("t"); ax3.set_title("Costates (= -mult_g)"); ax3.legend()
+    
+    fig.suptitle("Stage 1 Optimization Results", fontsize = 16)
     plt.tight_layout()
-    plt.savefig("lagrange_optimization_stage1.png", dpi=110)
-    print("\nsaved plot -> lagrange_optimization_stage1.png")
+    plt.savefig("lagrange_multiplier_stage1.png", dpi=110)
+    print("\nsaved plot -> lagrange_multiplier_stage1.png")
 
     # STAGE 2 PLOT: reconstruct dense trajectories from the converged solution
     nodes_opt = Zopt[:6 * 8].reshape(6, 8)
@@ -373,23 +374,25 @@ if __name__ == "__main__":
 
     b1.plot(t2, Y2[:, 0], "k-", label="x1"); b1.plot(t2, Y2[:, 1], "r--", label="x2")
     b1.plot(t2, Y2[:, 2], "g:", label="x3"); b1.plot(t2, Y2[:, 3], "b--", label="x4")
-    b1.set_title("STAGE 2: states"); b1.set_xlabel("t"); b1.legend()
+    b1.set_title("States (x)"); b1.set_xlabel("t"); b1.legend()
 
     b2.plot(t2, Y2[:, 4], "g-", label="λ1"); b2.plot(t2, Y2[:, 5], "r--", label="λ2")
     b2.plot(t2, Y2[:, 6], "b:", label="λ3"); b2.plot(t2, Y2[:, 7], "k--", label="λ4")
-    b2.set_title("STAGE 2: costates"); b2.set_xlabel("t"); b2.legend()
+    b2.set_title("Costates (λ)"); b2.set_xlabel("t"); b2.legend()
 
     b3.plot(t2, u2, "r")
     b3.axhline(1, color="k", ls="--", lw=0.8); b3.axhline(-1, color="k", ls="--", lw=0.8)
-    b3.set_ylim(-1.3, 1.3); b3.set_title("STAGE 2: control"); b3.set_xlabel("t"); b3.set_ylabel("u")
+    b3.set_ylim(-1.3, 1.3); b3.set_title("Control (u)"); b3.set_xlabel("t"); b3.set_ylabel("u")
 
     b4.plot(t2, sigma2, "m"); b4.axhline(0, color="k", ls="--", lw=0.8)
-    b4.set_title("STAGE 2: switching function σ"); b4.set_xlabel("t")
+    b4.set_title("Switching function σ"); b4.set_xlabel("t")
 
     for tsw in ts_opt_np:                                     # mark the 4 switching times
         b3.axvline(tsw, color="b", ls=":", lw=1)
         b4.axvline(tsw, color="b", ls=":", lw=1)
 
+    fig2.suptitle("Stage 2 Optimization Results", fontsize=16)
+
     plt.tight_layout()
-    plt.savefig("lagrange_optimization_stage2.png", dpi=110)
-    print("saved plot -> lagrange_optimization_stage2.png")
+    plt.savefig("lagrange_multiplier_stage2.png", dpi=110)
+    print("saved plot -> lagrange_multiplier_stage2.png")
