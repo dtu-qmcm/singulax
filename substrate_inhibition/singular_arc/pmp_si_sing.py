@@ -136,7 +136,7 @@ if __name__ == "__main__":
         axes[2].set_title('Feed rate')
         axes[2].grid(True)
 
-        axes[2].plot(t_plot, phi_plot, color='black', label='$\phi(t)$', linestyle = '--')
+        axes[2].plot(t_plot, phi_plot, color='black', label='$φ(t)$', linestyle = '--')
         axes[2].axhline(0, color='black', linestyle='--', alpha=0.5)
         axes[2].set_title('Switching Function')
         axes[2].legend()
