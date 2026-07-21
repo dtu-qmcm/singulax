@@ -21,7 +21,8 @@ def solve_and_get_residuals(xtf_guess, args):
         saveat=diffrax.SaveAt(t1=True),
         stepsize_controller=stepsize_controller,
         max_steps=int(1e5),
-        throw=False
+        throw=False,
+        adjoint=diffrax.DirectAdjoint(),
     )
     y_at_t0 = sol.ys[0]
     # Penalize diverged integrations
