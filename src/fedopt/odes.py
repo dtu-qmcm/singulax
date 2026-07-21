@@ -77,3 +77,8 @@ def hybrid_fedbatch(t, y, args):
     F_opt_ana = (sigma_star* y[0]) / (S_F-S_star)
 
     return vector_field(t, y, (S_F, F_opt_ana))
+
+# Flat convention where x and F are distinct differentiable arguments
+def states_ode(x, F, S_F):
+    return vf_states(0.0, x, (S_F, F))
+
