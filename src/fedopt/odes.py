@@ -82,3 +82,5 @@ def hybrid_fedbatch(t, y, args):
 def states_ode(x, F, S_F):
     return vf_states(0.0, x, (S_F, F))
 
+def costate_ode(y, S_F, F):
+    return get_dldt(0.0, y, (S_F, F))
