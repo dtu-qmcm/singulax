@@ -52,7 +52,8 @@ def solve_and_get_residuals_batch(l4_tf_guess, args):
         dt0=-0.01,
         saveat=diffrax.SaveAt(t1=True),
         stepsize_controller=stepsize_controller,
-        max_steps=int(1e5)
+        max_steps=int(1e5),
+        adjoint=diffrax.DirectAdjoint(),
     )
     y_at_tswitch = sol.ys[0]
     # Penalize diverged integrations
@@ -80,7 +81,9 @@ def solve_and_get_residuals_sing_and_batch(l4_tf_guess, args):
         saveat=diffrax.SaveAt(t1=True),
         stepsize_controller=stepsize_controller,
         max_steps=int(1e5),
-        throw=False
+        throw=False,
+        adjoint=diffrax.DirectAdjoint(),
+
     )
     y_at_tswitch = sol_at_tswitch.ys[0]
 
@@ -113,7 +116,6 @@ def loss_fn(xtf_guess, args):
 
 def loss_fn_batch(final_guess, args):
     res = solve_and_get_residuals_batch(final_guess, args)
-    jax.debug.print("res {res}", res=res)
     return jnp.sum(res**2)
 
 def loss_fn_sing_and_batch(final_guess, args):
