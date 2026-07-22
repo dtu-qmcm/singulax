@@ -38,7 +38,8 @@ nU = N                          # controls
 nz = nX + nU
 
 # define  grid/problem parameters and pass them into the hybrid functions
-p = CollocParams(N=N, nx=nx, h=h, nX=nX, nz=nz, S_F=S_F)
+# f = states_ode is the log(SV) RHS (fine here: substrate never exhausts on the pure arc)
+p = CollocParams(N=N, nx=nx, h=h, nX=nX, nz=nz, S_F=S_F, f=states_ode)
 
 obj_jit = jax.jit(lambda z: objective(z, p))
 grad_jit = jax.jit(jax.grad(lambda z: objective(z, p)))
