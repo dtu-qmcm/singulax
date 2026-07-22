@@ -216,10 +216,10 @@ if __name__ == "__main__":
         axes[4].legend(loc='upper left')
         ax4b.legend(loc='upper right')
 
-        print("Final XV value", y_plot[0, 0])
-        print("Final SV value", jnp.exp(y_plot[0, 1]))
-        print("Final PV value", y_plot[0, 2])
-        print("Final V value", y_plot[0, 3])
+        print("Final XV value", y_plot[-1, 0])
+        print("Final SV value", jnp.exp(y_plot[-1, 1]))
+        print("Final PV value", y_plot[-1, 2])
+        print("Final V value", y_plot[-1, 3])
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
         file_name = "output_pmp_sing_and_batch.png"
