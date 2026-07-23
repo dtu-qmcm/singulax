@@ -45,17 +45,6 @@ obj_jit = jax.jit(lambda z: objective(z, p))
 grad_jit = jax.jit(jax.grad(lambda z: objective(z, p)))
 con_jit = jax.jit(lambda z: constraints(z, p))
 
-
-# reconstruction fields (log coords); clip the singular feedback to the pump limits so a
-# small off-optimal excursion can't blow the plot up (on the true arc F in [0,1], never binds)
-def _batch_vf(t, y, args):
-    return vector_field(t, y, (S_F, 0.0))
-
-def _singular_vf(t, y, args):
-    F = jnp.clip(get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max)), F_min, F_max)
-    return vector_field(t, y, (S_F, F))
-
-
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
@@ -82,6 +71,7 @@ if __name__ == "__main__":
     X_opt, U_opt = unpack(jnp.asarray(result.x), p)
     X_opt = np.asarray(X_opt); U_opt = np.asarray(U_opt)
     x_opt_tf = X_opt[-1]
+    x_opt_tf_log = jnp.array([x_opt_tf[0], jnp.log(jnp.clip(x_opt_tf[1], 1e-12, None)), x_opt_tf[2], x_opt_tf[3]])
     mult_g = np.asarray(result.info["mult_g"]).reshape(N, nx)
 
     lam4_tf_seed = float(mult_g[-1, 3])
@@ -89,82 +79,55 @@ if __name__ == "__main__":
     print("x(tf) [XV,SV,PV,V]   =", x_opt_tf)
     print("lambda4(tf) seed     =", round(lam4_tf_seed, 4))
 
-    # Calculate switching time
     t_grid = np.linspace(0, tf, N + 1)
-    tol = 1e-5
-    indices_vmax = np.where(X_opt[:, 3] >= (V_max - tol))[0]
+    hit = np.where(X_opt[:, 3] >= V_max - 1e-5)[0]
+    t_switch_euler = float(t_grid[hit[0]]) if len(hit) else tf
+    print(f"Switching time seed = {t_switch_euler:.4f}")
 
-    idx_switch = indices_vmax[0]
-    t_switch = t_grid[idx_switch]
-    print(f"Switching time (t_switch) = {t_switch:.4f}")
+    # ===== STAGE 2: shoot (t_switch, lambda4) so phi = phidot = 0 at the singular junction =====
+    print("\n=== STAGE 2: shoot (t_switch, lambda4); phi = phidot = 0 at the junction ===")
+    def solve_and_get_residuals_ms(guess, args):
+        t_switch, l4_tf = guess
+        ytf = jnp.concatenate([x_opt_tf_log, jnp.array([0.0, 0.0, 1.0, l4_tf])])
+        sol = diffrax.diffeqsolve(
+            terms=diffrax.ODETerm(vector_field),
+            solver=diffrax.Kvaerno5(),
+            t0=tf, t1=t_switch, dt0=-0.01, y0=ytf,
+            args=(S_F, 0.0),                                # F = 0  (batch)
+            saveat=diffrax.SaveAt(t1=True),
+            stepsize_controller=diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10),
+            max_steps=100000, throw=False, adjoint=diffrax.DirectAdjoint(),
+        )
+        y_sw = sol.ys[-1]
+        y_sw = jnp.where(jnp.any(~jnp.isfinite(y_sw)), jnp.full(8, 1e6), y_sw)
+        ydot = vector_field(t_switch, y_sw, (S_F, 0.0))     
+        phi = get_phi(y_sw)                                 
+        phidot = S_F * ydot[5] + ydot[7]                    # d(phi)/dt = S_F*d(l2)/dt + d(l4)/dt
+        return jnp.array([phi, phidot])
 
-    x_tf_log = jnp.array([x_opt_tf[0], jnp.log(x_opt_tf[1]), x_opt_tf[2], x_opt_tf[3]])
-    
-    # ================= STAGE 2 =================
-    print("\n=== STAGE 2: backward shoot lambda4(tf) so phi(t_switch)=0 ===")
-    stage2_args = (tf, x0_log, S_F, x_tf_log, t_switch, V_max, F_min, F_max)
+    guess = jnp.array([t_switch_euler, lam4_tf_seed])
     solver = optx.LevenbergMarquardt(rtol=1e-10, atol=1e-12)
-    solution = optx.least_squares(
-        fn = solve_and_get_residuals_batch,
-        solver = solver,
-        y0 = lam4_tf_seed,
-        args = stage2_args,
-        max_steps = 2000,
-        throw = False
-    )
-    lam4_opt = float(solution.value)
-    res = solve_and_get_residuals_batch(lam4_opt, stage2_args)
-    print("optimal lambda4(tf) =", round(lam4_opt, 5))
-    print("phi(t_switch) resid =", float(res[0]))
+    solution = optx.least_squares(solve_and_get_residuals_ms, solver, guess,
+                                  args=None, max_steps=500, throw=False)
+    t_switch_opt, l4_opt = [float(v) for v in solution.value]
+    print("optimal t_switch =", round(t_switch_opt, 4))
+    print("optimal lambda4  =", round(l4_opt, 4))
+    print("residuals [phi, phidot] =", np.array(solve_and_get_residuals_ms(solution.value, None)))
 
-    # dense reconstruction (backward, reversed to increasing time) + x(0) check
-    ytf = jnp.concatenate([x_tf_log, jnp.array([0.0, 0.0, 1.0, lam4_opt])])
+    # reconstruct and check x(0)
+    ytf = jnp.concatenate([x_opt_tf_log, jnp.array([0.0, 0.0, 1.0, l4_opt])])
     sc = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10)
-    sol_b = diffrax.diffeqsolve(diffrax.ODETerm(_batch_vf), diffrax.Kvaerno5(),
-        t0=tf, t1=t_switch, dt0=-0.01, y0=ytf,
-        saveat=diffrax.SaveAt(ts=jnp.linspace(tf, t_switch, 200)),
+    batch_vf = lambda t, y, a: vector_field(t, y, (S_F, 0.0))
+    sing_vf = lambda t, y, a: vector_field(t, y, (S_F, jnp.clip(
+        get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max)), F_min, F_max)))
+    sol_b = diffrax.diffeqsolve(diffrax.ODETerm(batch_vf), diffrax.Kvaerno5(),
+        t0=tf, t1=t_switch_opt, dt0=-0.01, y0=ytf,
+        saveat=diffrax.SaveAt(ts=jnp.linspace(tf, t_switch_opt, 200)),
         stepsize_controller=sc, max_steps=100000, throw=False)
-    sol_s = diffrax.diffeqsolve(diffrax.ODETerm(_singular_vf), diffrax.Kvaerno5(),
-        t0=t_switch, t1=0.0, dt0=-0.01, y0=sol_b.ys[-1],
-        saveat=diffrax.SaveAt(ts=jnp.linspace(t_switch, 0.0, 300)),
+    sol_s = diffrax.diffeqsolve(diffrax.ODETerm(sing_vf), diffrax.Kvaerno5(),
+        t0=t_switch_opt, t1=0.0, dt0=-0.01, y0=sol_b.ys[-1],
+        saveat=diffrax.SaveAt(ts=jnp.linspace(t_switch_opt, 0.0, 300)),
         stepsize_controller=sc, max_steps=100000, throw=False)
-    t_plot = np.concatenate([np.asarray(sol_s.ts)[::-1], np.asarray(sol_b.ts)[::-1]])
-    y_plot = np.concatenate([np.asarray(sol_s.ys)[::-1], np.asarray(sol_b.ys)[::-1]])
-    F_plot = np.where(t_plot < t_switch,
-                      np.asarray(jax.vmap(lambda y: jnp.clip(get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max)), F_min, F_max))(jnp.asarray(y_plot))),
-                      0.0)
-    phi_plot = np.asarray(jax.vmap(get_phi)(jnp.asarray(y_plot)))
-
-    print("\nRecovered x(0) = [%.3f, SV=%.3f, %.3f, %.3f]  (target [10, %.3f, 0, 1])"
-          % (y_plot[0, 0], np.exp(y_plot[0, 1]), y_plot[0, 2], y_plot[0, 3], float(S0)))
-    print("Final    x(tf) = [%.3f, SV=%.4g, %.3f, %.3f]"
-          % (y_plot[-1, 0], np.exp(y_plot[-1, 1]), y_plot[-1, 2], y_plot[-1, 3]))
-
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-
-    # ---- STAGE 1 plot ----
-    t_state = np.linspace(0, tf, N + 1); t_ctrl = np.linspace(0, tf, N, endpoint=False) + 0.5 * h
-    fig1, (a1, a2) = plt.subplots(1, 2, figsize=(13, 4))
-    a1.plot(t_state, X_opt[:, 0], "k-", label="XV"); a1.plot(t_state, X_opt[:, 1], "r--", label="SV")
-    a1.plot(t_state, X_opt[:, 2], "g:", label="PV"); a1.plot(t_state, X_opt[:, 3], "b-.", label="V")
-    a1.axvline(t_switch, color="m", ls=":", lw=1); a1.set_title("Stage 1: states (physical)"); a1.legend(); a1.set_xlabel("t")
-    a2.plot(t_ctrl, U_opt, "r"); a2.axhline(F_max, color="k", ls="--", lw=.8); a2.axhline(F_min, color="k", ls="--", lw=.8)
-    a2.axvline(t_switch, color="m", ls=":", lw=1, label="t_switch (S=S* sim)")
-    a2.set_title("Stage 1: feed (chatters on singular arc)"); a2.set_xlabel("t"); a2.set_ylabel("F"); a2.legend()
-    fig1.tight_layout(); fig1.savefig(os.path.join(script_dir, "hybrid_sb_stage1.png"), dpi=110)
-    print("saved -> hybrid_sb_stage1.png")
-
-    # ---- STAGE 2 plot ----
-    fig2, ((b1, b2), (b3, b4)) = plt.subplots(2, 2, figsize=(14, 8))
-    b1.plot(t_plot, y_plot[:, 0], "k-", label="XV"); b1.plot(t_plot, np.exp(y_plot[:, 1]), "r--", label="SV")
-    b1.plot(t_plot, y_plot[:, 2], "g:", label="PV"); b1.plot(t_plot, y_plot[:, 3], "b-.", label="V")
-    b1.axvline(t_switch, color="m", ls=":", lw=1); b1.set_title("States"); b1.set_xlabel("t"); b1.legend()
-    b2.plot(t_plot, np.exp(y_plot[:, 1]) / y_plot[:, 3], "r-", label="S"); b2.plot(t_plot, y_plot[:, 2] / y_plot[:, 3], "g--", label="P")
-    b2.axhline(float(S0), color="k", ls=":", lw=.8, label="S*"); b2.set_title("S, P concentration"); b2.set_xlabel("t"); b2.legend()
-    b3.plot(t_plot, F_plot, "b"); b3.axhline(F_max, color="k", ls="--", lw=.8); b3.axhline(F_min, color="k", ls="--", lw=.8)
-    b3.axvline(t_switch, color="m", ls=":", lw=1); b3.set_title("Feed rate F"); b3.set_xlabel("t"); b3.set_ylabel("F")
-    b4.plot(t_plot, phi_plot, "m"); b4.axhline(0, color="k", ls="--", lw=.8); b4.axvline(t_switch, color="m", ls=":", lw=1)
-    b4.set_title("Switching function φ"); b4.set_xlabel("t")
-    fig2.suptitle("Stage 2: singular arc + batch (backward λ4 shoot)", fontsize=15)
-    fig2.tight_layout(); fig2.savefig(os.path.join(script_dir, "hybrid_sb_stage2.png"), dpi=110)
-    print("saved -> hybrid_sb_stage2.png")
+    y0 = np.asarray(sol_s.ys[-1])
+    print("Recovered x(0) = [%.3f, SV=%.3f, %.3f, %.3f]  (target [10, %.4f, 0, 1])"
+          % (y0[0], np.exp(y0[1]), y0[2], y0[3], float(S0)))
