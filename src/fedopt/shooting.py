@@ -1,7 +1,7 @@
 import jax
 import diffrax
 import jax.numpy as jnp
-from fedopt.odes import vector_field, get_phi
+from fedopt.odes import vector_field, get_phi, l_to_orig, objective_batch
 from fedopt.Fsin import get_Fsin, get_Fsin_unconstrained
 
 def solve_and_get_residuals(xtf_guess, args):
@@ -35,6 +35,40 @@ def solve_and_get_residuals(xtf_guess, args):
         y_at_t0[2] - x0[2],                         
         y_at_t0[3] - x0[3],                  
     ])
+
+def solve_and_get_residuals_sing(guess, args):
+    tf, x0_log, S_F, V_max, F_min, F_max = args
+    lam0 = guess[:4]
+    t_switch = jnp.clip(guess[4], 0.5, tf - 0.05)         # keep 0 < t_switch < tf
+    y0 = jnp.concatenate([x0_log, lam0])
+    yd0 = vector_field(0.0, y0, (S_F, get_Fsin_unconstrained(y0, (S_F, V_max, F_min, F_max))))
+    phi0 = get_phi(y0)
+    phidot0 = S_F * yd0[5] + yd0[7]
+    sing_vf = lambda t, y, a: vector_field(t, y, (S_F, get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max))))
+    sc = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10)
+    # forward singular arc 0 -> t_switch
+    sol = diffrax.diffeqsolve(
+            diffrax.ODETerm(sing_vf),
+            diffrax.Tsit5(),
+            t0=0.0, t1=t_switch, dt0=0.01, y0=y0,
+            saveat=diffrax.SaveAt(t1=True),
+            stepsize_controller=sc,
+            max_steps=100000,
+            throw=False,
+            adjoint=diffrax.ForwardMode())
+    y_sw = sol.ys[-1]
+    y_sw = jnp.where(jnp.any(~jnp.isfinite(y_sw)), jnp.full(8, 1e6), y_sw)
+    x_sw, lam_sw = y_sw[:4], y_sw[4:]
+    grad_PV = l_to_orig(x_sw, jax.grad(lambda x: objective_batch(x, t_switch, (tf, S_F)))(x_sw))
+    return jnp.array([
+            lam0[2] - 1.0,                 # lambda3(0) = 1  (PV costate normalisation)
+            phi0,                          # start on the singular surface
+            phidot0,                       # start on the singular surface
+            100*(x_sw[3] - V_max),         # V(t_switch) = V_max   <-- the switch trigger
+            lam_sw[0] - grad_PV[0],        # costate continuity at the junction: XV
+            lam_sw[1] - grad_PV[1],        # costate continuity at the junction: SV
+        ])
+
 
 def solve_and_get_residuals_batch(l4_tf_guess, args):
     tf, x0, S_F, xtf, t_switch, V_max, Fmin, Fmax = args
