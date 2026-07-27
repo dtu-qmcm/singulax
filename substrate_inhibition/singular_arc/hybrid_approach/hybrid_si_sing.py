@@ -112,7 +112,7 @@ if __name__ == "__main__":
     )
     xtf_opt = solution.value
     res_opt = solve_and_get_residuals(xtf_opt, stage2_args)
-    print("optimal x(tf) =", np.array(xtf_opt))
+    print("optimal x(tf) =", np.array([xtf_opt[0], np.exp(xtf_opt[1]), xtf_opt[2], xtf_opt[3]]))
     print("residual norm =", float(jnp.linalg.norm(res_opt)))
 
     # re-simulate the converged solution on a dense grid for plotting: integrate
