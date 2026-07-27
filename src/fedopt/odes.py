@@ -1,4 +1,5 @@
 import jax
+import diffrax
 import jax.numpy as jnp
 from fedopt.si_kinetics import mu, sigma, pi
 
@@ -77,6 +78,26 @@ def hybrid_fedbatch(t, y, args):
     F_opt_ana = (sigma_star* y[0]) / (S_F-S_star)
 
     return vector_field(t, y, (S_F, F_opt_ana))
+
+def batch_phys_vf(t, x, args):
+    S_F = args
+    x = x.at[1].set(jnp.maximum(x[1], jnp.log(1e-12)))
+    return vf_states(t, x, (S_F, 0.0))
+
+def objective_batch(x_sw, t_switch, args):
+    tf, S_F = args
+    sc = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10)
+    sol = diffrax.diffeqsolve(
+        diffrax.ODETerm(batch_phys_vf),
+        diffrax.Tsit5(),
+        t0=t_switch, t1=tf, dt0=0.01, y0=x_sw,
+        args=S_F,
+        saveat=diffrax.SaveAt(t1=True),
+        stepsize_controller=sc,
+        max_steps=100000,
+        throw=False,
+        adjoint=diffrax.DirectAdjoint())
+    return sol.ys[-1][2]   
 
 # Flat convention where x and F are distinct differentiable arguments
 def states_ode(x, F, S_F):
