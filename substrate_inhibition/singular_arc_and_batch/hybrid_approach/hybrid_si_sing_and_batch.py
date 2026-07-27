@@ -7,7 +7,7 @@ import optimistix as optx
 from cyipopt import minimize_ipopt
 
 from fedopt.odes import f_vec_orig, g_vec_orig, vector_field, get_phi
-from fedopt.Fsin import get_Fsin_unconstrained
+from fedopt.Fsin import get_Fsin_unconstrained, get_Fsin
 from fedopt.si_analytical import states_analytical_sol, volume_cond
 from fedopt.shooting import solve_and_get_residuals_batch, loss_fn_batch
 from fedopt.hybrid import CollocParams, unpack, objective, constraints, jac_defects
@@ -75,9 +75,11 @@ if __name__ == "__main__":
     mult_g = np.asarray(result.info["mult_g"]).reshape(N, nx)
 
     lam4_tf_seed = float(mult_g[-1, 3])
+    lam_t0_seed = mult_g[0, :]
     print("PV(tf)               =", x_opt_tf[ 2])
     print("x(tf) [XV,SV,PV,V]   =", x_opt_tf)
     print("lambda4(tf) seed     =", round(lam4_tf_seed, 4))
+    print("lambda4(t0) seed     =", lam_t0_seed)
 
     t_grid = np.linspace(0, tf, N + 1)
     hit = np.where(X_opt[:, 3] >= V_max - 1e-5)[0]
@@ -87,47 +89,55 @@ if __name__ == "__main__":
     # ===== STAGE 2: shoot (t_switch, lambda4) so phi = phidot = 0 at the singular junction =====
     print("\n=== STAGE 2: shoot (t_switch, lambda4); phi = phidot = 0 at the junction ===")
     def solve_and_get_residuals_ms(guess, args):
-        t_switch, l4_tf = guess
-        ytf = jnp.concatenate([x_opt_tf_log, jnp.array([0.0, 0.0, 1.0, l4_tf])])
-        sol = diffrax.diffeqsolve(
-            terms=diffrax.ODETerm(vector_field),
+        l0 = guess[:4]
+        t_switch = guess[4]
+        x0, t_end = args
+        y0 = jnp.concatenate([x0, l0])
+        stepsize_controller=diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10)
+        sol_to_sw = diffrax.diffeqsolve(
+            terms=diffrax.ODETerm(lambda t, y, args: vector_field(t, y, (S_F, get_Fsin(y, (S_F, V_max, F_min, F_max))))),
             solver=diffrax.Kvaerno5(),
-            t0=tf, t1=t_switch, dt0=-0.01, y0=ytf,
-            args=(S_F, 0.0),                                # F = 0  (batch)
+            t0=0.0, t1=t_switch, dt0=0.01, y0=y0,
             saveat=diffrax.SaveAt(t1=True),
-            stepsize_controller=diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10),
-            max_steps=100000, throw=False, adjoint=diffrax.DirectAdjoint(),
+            stepsize_controller=stepsize_controller,
+            max_steps=100000, throw=False,
+            adjoint=diffrax.ForwardMode()
         )
-        y_sw = sol.ys[-1]
+        y_sw = sol_to_sw.ys[-1]
         y_sw = jnp.where(jnp.any(~jnp.isfinite(y_sw)), jnp.full(8, 1e6), y_sw)
         ydot = vector_field(t_switch, y_sw, (S_F, 0.0))     
         phi = get_phi(y_sw)                                 
         phidot = S_F * ydot[5] + ydot[7]                    # d(phi)/dt = S_F*d(l2)/dt + d(l4)/dt
-        return jnp.array([phi, phidot])
+        sol_to_tf = diffrax.diffeqsolve(
+            terms=diffrax.ODETerm(lambda t, y, args: vector_field(t, y, (S_F, 0.0))),
+            solver=diffrax.Kvaerno5(),
+            t0=t_switch, t1=t_end, dt0=0.01, y0=y_sw,
+            saveat=diffrax.SaveAt(t1=True),
+            stepsize_controller=stepsize_controller,
+            max_steps=100000,
+            throw=False,
+            adjoint=diffrax.ForwardMode()
+        )
+        y_tf = sol_to_tf.ys[-1]
+        y_tf = jnp.where(jnp.any(~jnp.isfinite(y_tf)), jnp.full(8, 1e6), y_tf)
 
-    guess = jnp.array([t_switch_euler, lam4_tf_seed])
+        bc = jnp.array([phi,
+                        phidot,
+                        y_tf[3]-V_max,
+                        y_tf[4]-0,
+                        y_tf[5]-0,
+                        y_tf[6]-1
+                       ])
+        return bc
+    
+    guess = jnp.concatenate([jnp.asarray(lam_t0_seed), jnp.array([t_switch_euler])])
     solver = optx.LevenbergMarquardt(rtol=1e-10, atol=1e-12)
     solution = optx.least_squares(solve_and_get_residuals_ms, solver, guess,
-                                  args=None, max_steps=500, throw=False)
-    t_switch_opt, l4_opt = [float(v) for v in solution.value]
-    print("optimal t_switch =", round(t_switch_opt, 4))
-    print("optimal lambda4  =", round(l4_opt, 4))
-    print("residuals [phi, phidot] =", np.array(solve_and_get_residuals_ms(solution.value, None)))
-
-    # reconstruct and check x(0)
-    ytf = jnp.concatenate([x_opt_tf_log, jnp.array([0.0, 0.0, 1.0, l4_opt])])
-    sc = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-10)
-    batch_vf = lambda t, y, a: vector_field(t, y, (S_F, 0.0))
-    sing_vf = lambda t, y, a: vector_field(t, y, (S_F, jnp.clip(
-        get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max)), F_min, F_max)))
-    sol_b = diffrax.diffeqsolve(diffrax.ODETerm(batch_vf), diffrax.Kvaerno5(),
-        t0=tf, t1=t_switch_opt, dt0=-0.01, y0=ytf,
-        saveat=diffrax.SaveAt(ts=jnp.linspace(tf, t_switch_opt, 200)),
-        stepsize_controller=sc, max_steps=100000, throw=False)
-    sol_s = diffrax.diffeqsolve(diffrax.ODETerm(sing_vf), diffrax.Kvaerno5(),
-        t0=t_switch_opt, t1=0.0, dt0=-0.01, y0=sol_b.ys[-1],
-        saveat=diffrax.SaveAt(ts=jnp.linspace(t_switch_opt, 0.0, 300)),
-        stepsize_controller=sc, max_steps=100000, throw=False)
-    y0 = np.asarray(sol_s.ys[-1])
-    print("Recovered x(0) = [%.3f, SV=%.3f, %.3f, %.3f]  (target [10, %.4f, 0, 1])"
-          % (y0[0], np.exp(y0[1]), y0[2], y0[3], float(S0)))
+                                  args=(x0_log, t_end), max_steps=500, throw=False)
+    l0_opt = solution.value[:4]
+    t_switch_opt = float(solution.value[4])
+    
+    print("optimal lambda(t0) =", np.round(np.asarray(l0_opt), 4))
+    print("optimal t_switch   =", round(t_switch_opt, 4))
+    res_final = solve_and_get_residuals_ms(solution.value, (x0_log, t_end))
+    print("residuals          =", np.array(res_final))
