@@ -1,0 +1,230 @@
+import jax
+import jax.numpy as jnp
+import numpy as np
+import diffrax
+import optimistix as optx
+from cyipopt import minimize_ipopt
+from fedopt.spi_shooting import solve_and_get_residuals_ms
+from fedopt.spi_odes import states_ode, vector_field, get_phi, vf_states
+from fedopt.spi_Fsin import get_Fsin_unconstrained
+from fedopt.hybrid import CollocParams, unpack, objective, constraints, jac_defects
+import os
+import matplotlib
+matplotlib.use("Agg")                      
+import matplotlib.pyplot as plt
+
+jax.config.update("jax_enable_x64", True)
+
+# ---- PROBLEM DATA ----
+S_F, V_max, F_max, F_min, t_end = 150.0, 10.0, 2.0, 0.0, 39.5
+x0 = jnp.array([0.1, 0.001, 0.0, 1.0])            # [XV, SV, PV, V]  (Shin & Lim original ICs, Fig 2)
+
+N = 400; tf = t_end; h = tf / N; nx = 4; nX = (N + 1) * nx; nz = nX + N
+
+p = CollocParams(N=N, nx=nx, h=h, nX=nX, nz=nz, S_F=S_F, f=states_ode)
+obj_jit = jax.jit(lambda z: objective(z, p))
+grad_jit = jax.jit(jax.grad(lambda z: objective(z, p)))
+con_jit = jax.jit(lambda z: constraints(z, p))
+
+
+def detect_switches(U, t_ctrl, F_min, F_max, tol=1e-2, min_dwell=3):
+    """Switch times from the FEED profile alone.
+    Classify each node: 2 = bang at F_max, 0 = bang at F_min / batch, 1 = singular (interior)."""
+    reg = np.where(U > F_max - tol, 2, np.where(U < F_min + tol, 0, 1))
+    i = 0                                             # debounce: absorb runs shorter than min_dwell
+    while i < len(reg):
+        j = i
+        while j < len(reg) and reg[j] == reg[i]:
+            j += 1
+        if j - i < min_dwell and i > 0:
+            reg[i:j] = reg[i - 1]
+        i = j
+    chg = np.where(np.diff(reg) != 0)[0]
+    return t_ctrl[chg + 1], [int(reg[0])] + [int(reg[c + 1]) for c in chg]
+
+
+if __name__ == "__main__":
+    # ===== STAGE 1: collocation =====
+    print("=== STAGE 1: collocation (maximise PV) ===")
+    F_init = 0.5
+    def _sim(x, _):
+        return x + h * states_ode(x, F_init, S_F), x
+    _, X_hist = jax.lax.scan(_sim, x0, None, length=N)
+    z0 = np.concatenate([np.asarray(jnp.concatenate([x0[None, :], X_hist])).ravel(), np.full(N, F_init)])
+
+    lb = np.full(nz, -np.inf); ub = np.full(nz, np.inf)
+    lb[:nx] = ub[:nx] = np.asarray(x0)
+    lb[1 + 4 * np.arange(N + 1)] = 0.0            # SV >= 0
+    ub[3 + 4 * np.arange(N + 1)] = V_max          # V <= V_max
+    lb[nX:] = F_min; ub[nX:] = F_max
+
+    cons = [{"type": "eq", "fun": lambda z: np.asarray(con_jit(jnp.asarray(z))), "jac": lambda z: jac_defects(z, p)}]
+    result = minimize_ipopt(
+        fun=lambda z: float(obj_jit(jnp.asarray(z))),
+        jac=lambda z: np.asarray(grad_jit(jnp.asarray(z))),
+        x0=z0, bounds=list(zip(lb, ub)), constraints=cons,
+        options={"max_iter": 3000, "tol": 1e-6, "print_level": 0})
+
+    X_opt, U_opt = unpack(jnp.asarray(result.x), p)
+    X_opt = np.asarray(X_opt); U_opt = np.asarray(U_opt)
+    mult_g = np.asarray(result.info["mult_g"]).reshape(N, nx)
+    lam_t0_seed = mult_g[0, :]
+    print("l0 seed:", mult_g[0, :])
+    print("l(tf) seed:", mult_g[-1, :])
+
+    # ----- switching times from Stage 1 -----
+    t_grid = np.linspace(0, tf, N + 1); t_ctrl = t_grid[:-1]
+    t_sw, seq = detect_switches(U_opt, t_ctrl, F_min, F_max)      # interior switches from the feed
+    S = X_opt[:, 1] / X_opt[:, 3]; P = X_opt[:, 2] / X_opt[:, 3]
+    print("feed-regime switches =", np.round(t_sw, 3))
+    print("regime sequence      =", seq, "  (2=Fmax bang, 1=singular, 0=Fmin/batch)")
+
+    # ---- Stage 1 plot ----
+    here = os.path.dirname(os.path.abspath(__file__))
+    fig, ax = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
+    ax = ax.ravel()
+    ax[0].plot(t_grid, X_opt[:, 0], label="(XV)")
+    ax[0].plot(t_grid, X_opt[:, 1], label="(SV)")
+    ax[0].plot(t_grid, X_opt[:, 2]/5, label="(PV)/5")
+    ax[0].plot(t_grid, X_opt[:, 3], label="V")
+    ax[0].set_title("State variables")
+    ax[0].set_xlabel("Time (h)")
+    ax[0].set_ylabel("State (g or V)")
+    ax[0].legend()
+    ax[1].plot(t_grid, S, label="S", color="orange")
+    ax[1].plot(t_grid, P, label="P", color="green")
+    ax[1].set_title("S and P concentration")
+    ax[1].set_xlabel("Time (h)")
+    ax[1].set_ylabel("Concentration (g/L)")
+    ax[1].legend()
+    ax[2].step(t_ctrl, U_opt,  label="F")
+    ax[2].set_ylim(F_min - 0.1, F_max + 0.1)
+    ax[2].set_xlabel("Time (h)")
+    ax[2].set_ylabel("F (L/h)")
+    fig.suptitle("SPI Stage 1")
+    fig.tight_layout()
+    fig.savefig(os.path.join(here, "spi_stage1.png"), dpi=130)
+    print("saved spi_stage1.png")
+
+    # ===== STAGE 2: shooting =====
+    print("=== STAGE 2: multiple shooting ===")
+    def _integ(y0, t0, t1, u):
+        vf_singular = lambda t, y, a: vector_field(t, y, (S_F, get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max))))
+        vf = vf_singular if u is None else vector_field
+        s = diffrax.diffeqsolve(diffrax.ODETerm(vf),
+                                diffrax.Tsit5(),
+                                t0=t0, t1=t1, y0=y0, dt0=0.01,
+                                args=(S_F, u),
+                                stepsize_controller=diffrax.PIDController(rtol=1e-6, atol=1e-6),
+                                saveat=diffrax.SaveAt(t1=True),                                max_steps=100000,
+                                throw=False)
+        return s.ys[-1]
+
+    seq3 = seq[:3]
+    arc_u = [F_max if s == 2 else F_min if s == 0 else None for s in seq3]
+    num_segments = len(arc_u)                                        # 3
+    sw = jnp.asarray(t_sw[:num_segments])                            # [t1, t2, t3]
+    shooting_nodes_guess = jnp.concatenate([jnp.array([0.0]), sw])   # [0, t1, t2, t3]
+
+    y = jnp.concatenate([x0, lam_t0_seed])
+    node_list = [y]
+    for i in range(num_segments):                                    # build node seeds by forward integration
+        y = _integ(y, shooting_nodes_guess[i], shooting_nodes_guess[i + 1], arc_u[i])
+        node_list.append(y)
+    guess0 = jnp.concatenate([jnp.stack(node_list).ravel(), sw])
+
+    ms_args = (num_segments, S_F, V_max, F_min, F_max, tf, x0, arc_u)
+    solver = optx.LevenbergMarquardt(rtol=1e-8, atol=1e-8)
+    sol = optx.least_squares(lambda u, a: solve_and_get_residuals_ms(u, a),
+                             solver,
+                             guess0,
+                             args=ms_args,
+                             max_steps=2000,
+                             throw=False)
+    Zopt = sol.value
+    res_final = solve_and_get_residuals_ms(Zopt, ms_args)
+    n_nodes = num_segments + 1
+    print("Stage 2 ||res|| =", float(jnp.linalg.norm(res_final)))
+    print("Stage 2 switch times =", np.round(np.asarray(Zopt[n_nodes * 8:]), 3))
+    ns8 = num_segments * 8
+    print("  ||defects|| =", round(float(jnp.linalg.norm(res_final[:ns8])), 4),
+          " ||bc_start|| =", round(float(jnp.linalg.norm(res_final[ns8:ns8 + 4])), 4),
+          " ||terminal|| =", round(float(jnp.linalg.norm(res_final[ns8 + 4:ns8 + 7])), 4),
+          " V-Vmax =", round(float(res_final[ns8 + 7]), 4))
+    print("  phi / phidot =", np.round(np.asarray(res_final[ns8 + 8:]), 5))
+    
+    # ---- Stage 2 plot ----
+    nodes_opt = np.asarray(Zopt[:n_nodes * 8]).reshape(n_nodes, 8)
+    sw_eff = np.maximum.accumulate(np.clip(np.asarray(Zopt[n_nodes * 8:]), 1e-2, tf - 1e-2))  # matches residual
+    nodes_t = np.concatenate([[0.0], sw_eff])
+    sc2 = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-12)
+    vf_sing = lambda t, y, a: vector_field(t, y, (S_F, get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max))))
+    seg_t, seg_y, seg_F = [], [], []
+    for i in range(num_segments):
+        u = arc_u[i]
+        vf = vf_sing if u is None else vector_field
+        tsi = jnp.linspace(nodes_t[i], max(nodes_t[i + 1], nodes_t[i] + 1e-9), 60)
+        s = diffrax.diffeqsolve(diffrax.ODETerm(vf), diffrax.Tsit5(), t0=nodes_t[i],
+            t1=max(nodes_t[i + 1], nodes_t[i] + 1e-9), y0=jnp.asarray(nodes_opt[i]), dt0=0.01,
+            args=(S_F, u), saveat=diffrax.SaveAt(ts=tsi), stepsize_controller=sc2, max_steps=100000, throw=False)
+        yi = np.asarray(s.ys); seg_t.append(np.asarray(s.ts)); seg_y.append(yi)
+        seg_F.append(np.asarray(jax.vmap(lambda y: get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max)))(jnp.asarray(yi)))
+                     if u is None else np.full(len(yi), u))
+    sb = diffrax.diffeqsolve(diffrax.ODETerm(vector_field), diffrax.Tsit5(),
+        t0=nodes_t[-1], t1=tf, y0=jnp.asarray(nodes_opt[-1]), dt0=0.01, args=(S_F, 0.0),
+        saveat=diffrax.SaveAt(ts=jnp.linspace(nodes_t[-1], tf, 100)), stepsize_controller=sc2, max_steps=100000, throw=False)
+    tb, yb = np.asarray(sb.ts), np.asarray(sb.ys)
+    print("Final amount of product PV(tf) =", round(float(yb[-1, 2]), 2), "g   (Shin & Lim: 764.47 g)")
+    print("batch lambda(tf) =", np.round(yb[-1, 4:], 4), "  (expect [0, 0, 1, eta], eta free)")
+
+    # single continuous trajectory: bang / bang / singular segments + batch
+    T = np.concatenate(seg_t + [tb])
+    Yf = np.concatenate(seg_y + [yb], axis=0)
+    Ff = np.concatenate(seg_F + [np.zeros(len(tb))])
+    S_all = Yf[:, 1] / Yf[:, 3]; P_all = Yf[:, 2] / Yf[:, 3]
+    phi_all = Yf[:, 5] * S_F + Yf[:, 7]
+
+    fig, axd = plt.subplot_mosaic([["state", "SP"], ["phi", "F"], ["adj", "adj"]], figsize=(13, 11))
+    axd["state"].plot(T, Yf[:, 0], label="(XV)")
+    axd["state"].plot(T, Yf[:, 1], label="(SV)")
+    axd["state"].plot(T, Yf[:, 2] / 5, label="(PV)/5")
+    axd["state"].plot(T, Yf[:, 3], label="V")
+    axd["state"].set_title("State variables")
+    axd["state"].set_xlabel("Time (h)")
+    axd["state"].set_ylabel("State (g or V)")
+    axd["state"].legend()
+
+    axd["SP"].plot(T, S_all, label="S", color="orange")
+    axd["SP"].plot(T, P_all, label="P", color="green")
+    axd["SP"].set_title("S and P concentration")
+    axd["SP"].set_xlabel("Time (h)")
+    axd["SP"].set_ylabel("Concentration (g/L)")
+    axd["SP"].legend()
+
+    axd["phi"].plot(T, phi_all, "purple")
+    axd["phi"].axhline(0, color="k", lw=0.7)
+    axd["phi"].set_title("Switching function, $\\phi$")
+    axd["phi"].set_xlabel("Time (h)")
+    axd["phi"].set_ylabel("$\\phi$")
+    
+    axd["F"].plot(T, Ff, "m")
+    axd["F"].set_ylim(F_min - 0.1, F_max + 0.1)
+    axd["F"].set_title("Feed flow rate")
+    axd["F"].set_ylabel("F (L/h)")
+    axd["F"].set_xlabel("Time (h)")
+    
+    for k, lb in enumerate([r"$\lambda_{XV}$", r"$\lambda_{SV}$", r"$\lambda_{PV}$", r"$\lambda_V$"]):
+        axd["adj"].plot(T, Yf[:, 4 + k], label=lb)
+    axd["adj"].set_title("Adjoints")
+    axd["adj"].set_xlabel("Time (h)")
+    axd["adj"].set_ylabel("$\\lambda$")
+    axd["adj"].legend(ncol=4)
+    # dashed vertical lines at the switching times, in every subplot
+    for a in axd.values():
+        for tsw in sw_eff:
+            a.axvline(float(tsw), ls="--", color="gray", lw=0.8)
+    fig.suptitle("SPI Stage 2")
+    fig.tight_layout(); fig.savefig(os.path.join(here, "spi_stage2.png"), dpi=130)
+    print("saved spi_stage2.png")
+    
+
