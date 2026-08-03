@@ -1,23 +1,36 @@
+"""Two-stage hybrid solve of the substrate + product inhibition fed-batch problem
+(Shin & Lim ethanol case study).
+
+Stage 1 (direct): a forward-Euler collocation NLP (IPOPT) that gives an approximate
+trajectory -- enough to read off the bang/singular/batch structure and to seed the
+initial costate lambda(0) from the constraint multipliers.
+
+Stage 2 (indirect): PMP multiple shooting, initialized from Stage 1, that refines the
+switch times and adjoints to high accuracy; the terminal batch enters as a terminal
+condition (V = V_max at the last node) rather than as a shooting segment.
+
+Run as a script; writes spi_stage1.png and spi_stage2.png next to this file.
+"""
 import jax
-import jax.numpy as jnp
-import numpy as np
 import diffrax
-import optimistix as optx
-from cyipopt import minimize_ipopt
-from fedopt.spi_shooting import solve_and_get_residuals_ms
-from fedopt.spi_odes import states_ode, vector_field, get_phi, vf_states
-from fedopt.spi_Fsin import get_Fsin_unconstrained
-from fedopt.hybrid import CollocParams, unpack, objective, constraints, jac_defects
 import os
 import matplotlib
 matplotlib.use("Agg")                      
 import matplotlib.pyplot as plt
+import jax.numpy as jnp
+import numpy as np
+import optimistix as optx
+from cyipopt import minimize_ipopt
+from fedopt.substrate_product_inhibition.shooting import solve_and_get_residuals_ms
+from fedopt.substrate_product_inhibition.odes import states_ode, vector_field, get_phi, vf_states
+from fedopt.substrate_product_inhibition.Fsin import get_Fsin_unconstrained
+from fedopt.hybrid import CollocParams, unpack, objective, constraints, jac_defects, detect_switches
 
 jax.config.update("jax_enable_x64", True)
 
 # ---- PROBLEM DATA ----
 S_F, V_max, F_max, F_min, t_end = 150.0, 10.0, 2.0, 0.0, 39.5
-x0 = jnp.array([0.1, 0.001, 0.0, 1.0])            # [XV, SV, PV, V]  (Shin & Lim original ICs, Fig 2)
+x0 = jnp.array([0.1, 0.001, 0.0, 1.0])            # [XV, SV, PV, V]
 
 N = 400; tf = t_end; h = tf / N; nx = 4; nX = (N + 1) * nx; nz = nX + N
 
@@ -26,28 +39,12 @@ obj_jit = jax.jit(lambda z: objective(z, p))
 grad_jit = jax.jit(jax.grad(lambda z: objective(z, p)))
 con_jit = jax.jit(lambda z: constraints(z, p))
 
-
-def detect_switches(U, t_ctrl, F_min, F_max, tol=1e-2, min_dwell=3):
-    """Switch times from the FEED profile alone.
-    Classify each node: 2 = bang at F_max, 0 = bang at F_min / batch, 1 = singular (interior)."""
-    reg = np.where(U > F_max - tol, 2, np.where(U < F_min + tol, 0, 1))
-    i = 0                                             # debounce: absorb runs shorter than min_dwell
-    while i < len(reg):
-        j = i
-        while j < len(reg) and reg[j] == reg[i]:
-            j += 1
-        if j - i < min_dwell and i > 0:
-            reg[i:j] = reg[i - 1]
-        i = j
-    chg = np.where(np.diff(reg) != 0)[0]
-    return t_ctrl[chg + 1], [int(reg[0])] + [int(reg[c + 1]) for c in chg]
-
-
 if __name__ == "__main__":
     # ===== STAGE 1: collocation =====
     print("=== STAGE 1: collocation (maximise PV) ===")
     F_init = 0.5
     def _sim(x, _):
+        """Forward-Euler rollout at constant feed F_init; produces the Stage-1 NLP seed z0."""
         return x + h * states_ode(x, F_init, S_F), x
     _, X_hist = jax.lax.scan(_sim, x0, None, length=N)
     z0 = np.concatenate([np.asarray(jnp.concatenate([x0[None, :], X_hist])).ravel(), np.full(N, F_init)])
@@ -70,7 +67,6 @@ if __name__ == "__main__":
     mult_g = np.asarray(result.info["mult_g"]).reshape(N, nx)
     lam_t0_seed = mult_g[0, :]
     print("l0 seed:", mult_g[0, :])
-    print("l(tf) seed:", mult_g[-1, :])
 
     # ----- switching times from Stage 1 -----
     t_grid = np.linspace(0, tf, N + 1); t_ctrl = t_grid[:-1]
@@ -109,6 +105,8 @@ if __name__ == "__main__":
     # ===== STAGE 2: shooting =====
     print("=== STAGE 2: multiple shooting ===")
     def _integ(y0, t0, t1, u):
+        """Integrate one arc [t0, t1] to build a multiple-shooting node seed.
+        u is the bang feed (F_max / F_min), or None for the singular arc (F_sing feedback)."""
         vf_singular = lambda t, y, a: vector_field(t, y, (S_F, get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max))))
         vf = vf_singular if u is None else vector_field
         s = diffrax.diffeqsolve(diffrax.ODETerm(vf),
