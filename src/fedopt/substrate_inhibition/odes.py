@@ -1,7 +1,7 @@
 import jax
 import diffrax
 import jax.numpy as jnp
-from fedopt.si_kinetics import mu, sigma, pi
+from .kinetics import mu, sigma, pi
 
 def f_vec(x_val):
     SV = jnp.exp(x_val[1])

@@ -1,8 +1,8 @@
 import jax
 import diffrax
 import jax.numpy as jnp
-from fedopt.odes import vector_field, get_phi, l_to_orig, objective_batch
-from fedopt.Fsin import get_Fsin, get_Fsin_unconstrained
+from .odes import vector_field, get_phi, l_to_orig, objective_batch
+from .Fsin import get_Fsin, get_Fsin_unconstrained
 
 def solve_and_get_residuals(xtf_guess, args):
     tf, x0, S_F, V_max, Fmin, Fmax = args

@@ -1,8 +1,8 @@
 import jax
 import jax.numpy as jnp
 import diffrax
-from fedopt.spi_odes import vector_field, get_phi, vf_states
-from fedopt.spi_Fsin import get_Fsin_unconstrained
+from .odes import vector_field, get_phi, vf_states
+from .Fsin import get_Fsin_unconstrained
 
 
 def solve_and_get_residuals_ms(guess, args):

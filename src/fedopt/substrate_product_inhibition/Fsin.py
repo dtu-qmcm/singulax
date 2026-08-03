@@ -1,6 +1,6 @@
 import jax
 import jax.numpy as jnp
-from fedopt.spi_odes import f_vec, g_vec
+from .odes import f_vec, g_vec
 
 def lie_bracket_fg(x_val, S_F):
     df_dx = jax.jacobian(f_vec)(x_val)

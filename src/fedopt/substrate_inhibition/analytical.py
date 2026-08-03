@@ -1,6 +1,6 @@
 import jax.numpy as jnp
-from fedopt.si_kinetics import sigma
-from fedopt.odes import vf_states, vector_field
+from .kinetics import sigma
+from .odes import vf_states, vector_field
 
 def states_analytical_sol(t, y, args):
     S_F, V_max = args
