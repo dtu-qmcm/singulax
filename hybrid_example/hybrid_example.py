@@ -1,3 +1,13 @@
+"""Hybrid two-stage solver for the cart-pole singular optimal control problem
+(Foroozandeh et al., 2018, Illustrative Example 1).
+
+Stage 1 (direct): a forward-Euler transcription solved as an NLP with IPOPT. Its
+constraint multipliers seed the costates, and its optimal control profile reveals
+the bang-singular-bang structure.
+
+Stage 2 (indirect): PMP multiple shooting, initialized from Stage 1, that refines
+the switching times and the adjoints to high accuracy.
+"""
 import jax
 import matplotlib.pyplot as plt
 import diffrax
@@ -97,6 +107,8 @@ def detect_switching_times(u, tf, eps=0.05, min_singular=15):
 
 
 def switching_fn(y):
+    """Switching function sigma = dH/du = (l4 - c*l2)/D, the coefficient of u in H.
+    Its sign selects the bang control (+-1); sigma = 0 defines the singular arc."""
     x, l = jnp.split(y, 2)
     x1 = x[0]
     c = jnp.cos(x1)
@@ -119,6 +131,11 @@ def costate_ode(x, u, lam):
     return -jax.grad(hamiltonian, argnums=0)(x, u, lam)
 
 def u_sing(x, l, t):
+    """Singular feedback control on the singular arc.
+
+    On the arc sigma = 0 and all its time derivatives vanish. The control first
+    appears at the second derivative (finite-order singular problem), so u is
+    obtained by solving sigma_ddot = 0 for u."""
     x1, x2, x3, x4 = x[0], x[1], x[2], x[3]
     l1, l2, l3, l4 = l[0], l[1], l[2], l[3]
     c = jnp.cos(x1)
@@ -148,6 +165,19 @@ def vector_field_singular(t, y, args):
 
 
 def solve_and_get_residuals__ms(guess, args):
+    """Multiple-shooting residual vector for the bang-singular-bang-bang-bang structure.
+
+    guess = [ y_0, ..., y_5  (each 8 = [x(4), lambda(4)])  |  t_1, ..., t_4 ]
+            -> 6 nodes x 8 + 4 switch times = 52 unknowns.
+    args  = (num_segments=5, num_states=8).
+
+    Residuals (52 total, so the system is square):
+      - 40  continuity defects : shoot each arc from its node y_i and match y_{i+1}
+                                 (singular arc uses u_sing; bang arcs use +-1)
+      -  4  bc_start           : x(0) = x0
+      -  4  bc_end             : transversality  lambda(t_f) = x(t_f) - x_f
+      -  4  sw_res             : sigma = 0 at each interior switch node
+    """
     num_segments, num_states = args
     n_nodes = num_segments + 1
     params = guess[:n_nodes * num_states].reshape(n_nodes, num_states)
