@@ -79,3 +79,18 @@ def jac_defects(z, p):
 
     data = np.concatenate([np.asarray(A).ravel(), np.asarray(B).ravel(), np.asarray(C).ravel()])
     return coo_array((data, (rows, cols)), shape=(p.nx * p.N, p.nz))
+
+def detect_switches(U, t_ctrl, F_min, F_max, tol=1e-2, min_dwell=3):
+    """Switch times from the FEED profile alone.
+    Classify each node: 2 = bang at F_max, 0 = bang at F_min / batch, 1 = singular (interior)."""
+    reg = np.where(U > F_max - tol, 2, np.where(U < F_min + tol, 0, 1))
+    i = 0                                             # debounce: absorb runs shorter than min_dwell
+    while i < len(reg):
+        j = i
+        while j < len(reg) and reg[j] == reg[i]:
+            j += 1
+        if j - i < min_dwell and i > 0:
+            reg[i:j] = reg[i - 1]
+        i = j
+    chg = np.where(np.diff(reg) != 0)[0]
+    return t_ctrl[chg + 1], [int(reg[0])] + [int(reg[c + 1]) for c in chg]
