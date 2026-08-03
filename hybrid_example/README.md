@@ -3,6 +3,8 @@
 Picture a cart that slides on a horizontal track with a pendulum hinged on top of it. You are allowed to push the cart to the left or right with a force $u$, which serves as the only actuator. 
 Thus, the pole only moves because the cart accelerates underneath its pivot. 
 
+The goal is to bring the cart-pole system from an initial state to a terminal state with minimum control efforts. The initial state is the stable stationary point (the cart at a stop with the pole vertically down), and the terminal state is the unstable stationary state (the cart at a stop but with the pole vertically up).
+
 This example simulates **Illustrative Example 1 (A Finite Order Singular Problem)** from [Foroozandeh et al., 2018](https://doi.org/10.1007/s40995-017-0176-2).
 
 ### System Dynamics
