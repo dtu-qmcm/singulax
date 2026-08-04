@@ -1,3 +1,9 @@
+"""
+Analytical approach to solve the case where the control structure is
+known to follow Fmax->Fsin->Fb(0).
+On the singular arc the optimum holds S at S* = sqrt(Ks*Ki), giving the analytical feed
+    F = sigma(S*) * XV / (S_F - S*)
+ """
 import diffrax
 import os
 import optimistix as optx
