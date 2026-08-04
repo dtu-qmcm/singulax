@@ -1,3 +1,6 @@
+"""
+Script to solve the batch phase as a preliminary step.  
+"""
 import optimistix as optx
 import jax
 import diffrax
@@ -5,8 +8,8 @@ import jax.numpy as jnp
 from diffrax import ODETerm, Kvaerno5, SaveAt, diffeqsolve, Dopri5
 import numpy as np
 import matplotlib.pyplot as plt
-from fedopt.si_analytical import states_analytical_sol, calculate_real_feed, volume_cond
-from fedopt.shooting import loss_fn_batch
+from fedopt.substrate_inhibition.analytical import states_analytical_sol, calculate_real_feed, volume_cond
+from fedopt.substrate_inhibition.shooting import loss_fn_batch
 
 jax.config.update("jax_enable_x64", True)
 
