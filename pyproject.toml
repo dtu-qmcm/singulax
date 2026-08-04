@@ -1,7 +1,7 @@
 [project]
 name = "singulax"
 version = "0.1.0"
-description = "Add your description here"
+description = "The aim of this project is to optimize fed-batch fermentation processes by robustly aplying optimal control theory."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
