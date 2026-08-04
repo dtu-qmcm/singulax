@@ -1,3 +1,6 @@
+"""
+Hybrid two-stage approach to solve the case where the optimal control structure is Fsin->Fb(=0).  
+"""
 import jax
 import jax.numpy as jnp
 import numpy as np
