@@ -8,7 +8,7 @@ import diffrax
 import optimistix as optx
 from cyipopt import minimize_ipopt
 from fedopt.substrate_inhibition.shooting import solve_and_get_residuals_sing
-from fedopt.substrate_inhibition.odes import f_vec_orig, g_vec_orig, vf_states, vector_field, get_phi, l_to_orig, batch_phys_vf, objective_batch
+from fedopt.substrate_inhibition.odes import states_ode_phys, vf_states, vector_field, get_phi, l_to_orig, batch_phys_vf, objective_batch
 from fedopt.substrate_inhibition.Fsin import get_Fsin_unconstrained
 from fedopt.hybrid import CollocParams, unpack, objective, constraints, jac_defects
 import os
@@ -26,10 +26,6 @@ x0_phys = jnp.array([10.0, float(S0), 0.0, 1.0])            # [XV, SV, PV, V]
 x0_log = jnp.array([10.0, jnp.log(S0), 0.0, 1.0])           # [XV, log SV, PV, V]
 
 N = 400; tf = t_end; h = tf / N; nx = 4; nX = (N + 1) * nx; nz = nX + N
-
-
-def states_ode_phys(x, F, S_F):
-    return f_vec_orig(x) + g_vec_orig(x, S_F) * F
 
 p = CollocParams(N=N, nx=nx, h=h, nX=nX, nz=nz, S_F=S_F, f=states_ode_phys)
 obj_jit = jax.jit(lambda z: objective(z, p))
