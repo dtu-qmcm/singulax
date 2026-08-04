@@ -1,3 +1,8 @@
+"""
+Analytical approach to solve the case where the optimal control structure is F=Fsin (S0=S*).
+On the singular arc the optimum holds S at S* = sqrt(Ks*Ki), giving the analyticalfeed
+    F = sigma(S*) * XV / (S_F - S*)
+ """
 import jax
 import os
 import numpy as np
