@@ -1,3 +1,6 @@
+"""
+Indirect PMP shooting approach to solve the case where the optimal control structure is Fsin->Fb(=0)
+"""
 import optimistix as optx
 import jax
 import os
@@ -5,10 +8,10 @@ import diffrax
 import jax.numpy as jnp
 from diffrax import ODETerm, Kvaerno5, SaveAt, diffeqsolve, Dopri5
 import matplotlib.pyplot as plt
-from fedopt.si_analytical import states_analytical_sol, calculate_real_feed, volume_cond
-from fedopt.shooting import loss_fn_batch
-from fedopt.odes import vector_field, get_phi, get_dldt
-from fedopt.Fsin import get_Fsin_unconstrained, get_Fsin
+from fedopt.substrate_inhibition.analytical import states_analytical_sol, calculate_real_feed, volume_cond
+from fedopt.substrate_inhibition.shooting import loss_fn_batch
+from fedopt.substrate_inhibition.odes import vector_field, get_phi, get_dldt
+from fedopt.substrate_inhibition.Fsin import get_Fsin_unconstrained, get_Fsin
 
 jax.config.update("jax_enable_x64", True)
 
@@ -117,7 +120,7 @@ if __name__ == "__main__":
             )
         y_at_t0 = sol_to_t0.ys[-1]
 
-        # Simulate forward (commented out — forward costate integration is unstable for this problem)
+        # Simulate forward 
         sol1= diffeqsolve(
             terms=diffrax.ODETerm(lambda t, y, args: vector_field(t, y, (S_F, get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max))))),
             solver=diffrax.Kvaerno5(),
@@ -142,12 +145,6 @@ if __name__ == "__main__":
             saveat=diffrax.SaveAt(ts=jnp.linspace(t_switch, t_end, 500))
             )
         
-        #t_plot = jnp.concatenate([sol1.ts, sol2.ts])
-        #y_plot = jnp.concatenate([sol1.ys, sol2.ys])
-
-        # Backward simulation reversed to forward time order for plotting
-        # sol_to_t0:      ts from t_switch → 0  (singular arc, backward)
-        # sol_to_tswitch: ts from t_end → t_switch  (batch phase, backward)
         t_plot = jnp.concatenate([sol_to_t0.ts[::-1], sol_to_tswitch.ts[::-1]])
         y_plot = jnp.concatenate([sol_to_t0.ys[::-1], sol_to_tswitch.ys[::-1]])
 
@@ -292,7 +289,7 @@ if __name__ == "__main__":
         plt.tight_layout()
         plt.show()
 
-# --- COSTATE EXPLOSION INVESTIGATION ---
+        # --- COSTATE EXPLOSION INVESTIGATION ---
         # 1. Compute exact partial derivatives using JAX autodiff
         grad_mu = jax.grad(mu)
         grad_sigma = jax.grad(sigma)
