@@ -1,3 +1,6 @@
+"""
+Hybrid two-stage approach to solve the case where the optimal control structure is F=Fsin (S0=S*).  
+"""
 import os
 import jax
 import matplotlib.pyplot as plt
@@ -8,17 +11,17 @@ import optimistix as optx
 from scipy.sparse import coo_array
 from cyipopt import minimize_ipopt
 
-from fedopt.odes import vector_field, get_phi, states_ode
-from fedopt.Fsin import get_Fsin
+from fedopt.substrate_inhibition.odes import vector_field, get_phi, states_ode
+from fedopt.substrate_inhibition.Fsin import get_Fsin
 from fedopt.hybrid import CollocParams, unpack, objective, constraints, jac_defects
-from fedopt.shooting import solve_and_get_residuals
+from fedopt.substrate_inhibition.shooting import solve_and_get_residuals
   
 jax.config.update("jax_enable_x64", True)
 
 # PROBLEM DATA
 Ks = 0.1
 Ki = 100
-S0 = jnp.sqrt(Ks * Ki)          # S* = sqrt(Ks*Ki), the growth-optimal substrate level
+S0 = jnp.sqrt(Ks * Ki)          # S* = sqrt(Ks*Ki)
 S_F = 150.0
 V_max = 5.0
 F_max = 2.0
@@ -38,7 +41,6 @@ nU = N                          # controls
 nz = nX + nU
 
 # define  grid/problem parameters and pass them into the hybrid functions
-# f = states_ode is the log(SV) RHS (fine here: substrate never exhausts on the pure arc)
 p = CollocParams(N=N, nx=nx, h=h, nX=nX, nz=nz, S_F=S_F, f=states_ode)
 
 obj_jit = jax.jit(lambda z: objective(z, p))
