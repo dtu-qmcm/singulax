@@ -13,8 +13,8 @@ top level; import them from the relevant subpackage instead, e.g.::
     from fedopt.substrate_product_inhibition import get_phi, solve_and_get_residuals_ms
     from fedopt.hybrid import CollocParams
 """
-from . import hybrid
+from . import collocation
 from . import substrate_inhibition
 from . import substrate_product_inhibition
 
-__all__ = ["hybrid", "substrate_inhibition", "substrate_product_inhibition"]
+__all__ = ["collocation", "substrate_inhibition", "substrate_product_inhibition"]
