@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import jax.numpy as jnp
 import jax
-from fedopt.si_analytical import states_analytical_sol, calculate_real_feed, states_analytical_sol_bang, S_star_cond
+from fedopt.substrate_inhibition.analytical import states_analytical_sol, calculate_real_feed, states_analytical_sol_bang, S_star_cond
 
 jax.config.update("jax_enable_x64", True)
 
