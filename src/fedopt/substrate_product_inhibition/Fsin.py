@@ -21,8 +21,7 @@ def inner_bracket(x_val, S_F):
 def get_Fsin_unconstrained(y, args):
     """Singular feed from phi_ddot = 0:  F = - lambda^T[f,[f,g]] / lambda^T[g,[f,g]].
 
-    The numerator [f,[f,g]] = (d[f,g]/dx) f - (df/dx) [f,g] needs BOTH terms -- a
-    missing second term is an easy and costly bug. Result is clipped to [Fmin, Fmax].
+    The numerator [f,[f,g]] = (d[f,g]/dx) f - (df/dx) [f,g]. Result is clipped to [Fmin, Fmax].
     y = [x, lambda];  args = (S_F, V_max, Fmin, Fmax)."""
     S_F, V_max, Fmin, Fmax = args
     x, l = jnp.split(y, 2)
