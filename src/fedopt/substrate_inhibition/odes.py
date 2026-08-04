@@ -53,6 +53,9 @@ def g_vec_orig(x_val, S_F):
     """Control vector g = [0, S_F, 0, 1] in physical-SV coords."""
     return jnp.array([0.0, S_F, 0.0, 1.0])
 
+def states_ode_phys(x, F, S_F):
+    return f_vec_orig(x) + g_vec_orig(x, S_F) * F
+
 def l_to_orig(x, l):
     """Convert l[1] from log(SV)-conjugate to SV-conjugate."""
     SV = jnp.exp(x[1])
