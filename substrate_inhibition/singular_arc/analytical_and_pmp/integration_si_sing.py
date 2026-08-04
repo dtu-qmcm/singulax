@@ -1,11 +1,15 @@
+"""
+Intermediate step where the analytical singular feed formula (F = sigma(S*)*XV / (S_F - S*))
+is used to shoot and apply the PMP basis.
+"""
 import jax
 import diffrax
 import os
 import jax.numpy as jnp
 from diffrax import ODETerm, Kvaerno5, SaveAt, diffeqsolve
 import matplotlib.pyplot as plt
-from fedopt.si_analytical import states_analytical_sol, calculate_real_feed
-from fedopt.odes import hybrid_fedbatch, get_phi
+from fedopt.substrate_inhibition.analytical import states_analytical_sol, calculate_real_feed
+from fedopt.substrate_inhibition.odes import hybrid_fedbatch, get_phi
 
 
 jax.config.update("jax_enable_x64", True)
@@ -101,7 +105,7 @@ axes[2].set_xlabel('Time (h)')
 axes[2].set_title('Feed rate')
 axes[2].grid(True)
 
-axes[2].plot(t_plot, phi_plot, color='rebeccapurple', label='$\phi(t)$')
+axes[2].plot(t_plot, phi_plot, color='rebeccapurple', label=r'$\phi(t)$')
 axes[2].axhline(0, color='black', linestyle='--', alpha=0.5)
 axes[2].set_title('Switching Function')
 axes[2].legend()
