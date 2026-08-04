@@ -7,9 +7,9 @@ import numpy as np
 import jax.numpy as jnp
 import jax
 from scipy.optimize import fsolve
-from fedopt.si_analytical import states_analytical_sol, states_analytical_sol_batch, states_analytical_sol_bang, states_analytical_sol_singular, calculate_real_feed, volume_cond, analytical_sol_bang, analytical_sol_batch, analytical_sol_singular
-from fedopt.odes import get_phi, vector_field
-from fedopt.Fsin import get_Fsin_unconstrained, get_Fsin
+from fedopt.substrate_inhibition.analytical import states_analytical_sol, states_analytical_sol_batch, states_analytical_sol_bang, states_analytical_sol_singular, calculate_real_feed, volume_cond, analytical_sol_bang, analytical_sol_batch, analytical_sol_singular
+from fedopt.substrate_inhibition.odes import get_phi, vector_field
+from fedopt.substrate_inhibition.Fsin import get_Fsin_unconstrained, get_Fsin
 
 jax.config.update("jax_enable_x64", True)
 
@@ -144,21 +144,6 @@ def solve_and_get_residuals(guess, args):
         get_phi(y_at_t1_bwd),
         get_phi(y_at_tfull_bwd)
                      ])
-
-# def loss_fn(guess, args):
-#     S_F, V_max, Fmin, Fmax, tf, l1_tf, l2_tf, l3_tf = args
-#     res = solve_and_get_residuals(guess, args)
-#     jax.debug.print("res{res}", res=res)
-#     return jnp.sum(res**2)
-#
-# print("Running BFGS ...")
-# solver = optx.BFGS(rtol=1e-6, atol=1e-6)
-# solution = optx.minimise(fn=loss_fn, solver=solver, y0=guess,
-#                          args=(args_res), max_steps=10000, throw=False)
-# ── BFGS (and all optimistix gradient-based solvers) fail here because they
-#    differentiate through diffrax.Event via JAX autodiff, producing NaN/inf.
-#    fsolve uses finite differences — no JAX autodiff needed.
-
 args_res = S_F, V_max, 0.0, F_max, t_end, 0, 0, 1
 
 res0 = solve_and_get_residuals(guess, args_res)
