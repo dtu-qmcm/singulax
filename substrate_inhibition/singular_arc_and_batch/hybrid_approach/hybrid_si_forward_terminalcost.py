@@ -4,9 +4,9 @@ import numpy as np
 import diffrax
 import optimistix as optx
 from cyipopt import minimize_ipopt
-from fedopt.shooting import solve_and_get_residuals_sing
-from fedopt.odes import f_vec_orig, g_vec_orig, vf_states, vector_field, get_phi, l_to_orig, batch_phys_vf, objective_batch
-from fedopt.Fsin import get_Fsin_unconstrained
+from fedopt.substrate_inhibition.shooting import solve_and_get_residuals_sing
+from fedopt.substrate_inhibition.odes import f_vec_orig, g_vec_orig, vf_states, vector_field, get_phi, l_to_orig, batch_phys_vf, objective_batch
+from fedopt.substrate_inhibition.Fsin import get_Fsin_unconstrained
 from fedopt.hybrid import CollocParams, unpack, objective, constraints, jac_defects
 import os
 import matplotlib
