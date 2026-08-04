@@ -10,10 +10,9 @@ import diffrax
 import optimistix as optx
 from scipy.sparse import coo_array
 from cyipopt import minimize_ipopt
-
 from fedopt.substrate_inhibition.odes import vector_field, get_phi, states_ode
 from fedopt.substrate_inhibition.Fsin import get_Fsin
-from fedopt.hybrid import CollocParams, unpack, objective, constraints, jac_defects
+from fedopt.collocation import CollocParams, unpack, objective, constraints, jac_defects
 from fedopt.substrate_inhibition.shooting import solve_and_get_residuals
   
 jax.config.update("jax_enable_x64", True)
