@@ -1,3 +1,9 @@
+"""
+Analytical approach to solve the case where the optimal control structure is Fsin->Fb(=0).
+On the singular arc the optimum holds S at S* = sqrt(Ks*Ki), giving the analytical feed
+    F = sigma(S*) * XV / (S_F - S*)
+Forward integration of the problem is used in this script.
+"""
 import diffrax
 import os
 import optimistix as optx
@@ -6,7 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import jax.numpy as jnp
 import jax
-from fedopt.si_analytical import states_analytical_sol, calculate_real_feed, volume_cond
+from fedopt.substrate_inhibition.analytical import states_analytical_sol, calculate_real_feed, volume_cond
 
 jax.config.update("jax_enable_x64", True)
 
