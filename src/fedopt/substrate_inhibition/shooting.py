@@ -1,3 +1,17 @@
+"""Stage-2 indirect (PMP) shooting residuals for the substrate inhibition case.
+
+Each `solve_and_get_residuals*` returns the residual vector whose root is the extremal;
+the matching `loss_fn*` is its sum of squares:
+  * solve_and_get_residuals             : pure singular arc, BACKWARD shoot from tf; unknown = x(tf)
+  * solve_and_get_residuals_sing        : singular arc + batch terminal cost, FORWARD; unknown = [lambda(0), t_switch]
+  * solve_and_get_residuals_batch       : batch only, BACKWARD from tf; unknown = lambda_V(tf)
+  * solve_and_get_residuals_sing_and_batch : batch then singular, BACKWARD; unknown = lambda_V(tf)
+  * solve_and_get_residuals_bang_sing_batch : bang -> singular -> batch, FORWARD; unknown = [lambda(0), t1, t2]
+
+Convention (maximisation): terminal costate lambda(tf) = [0, 0, 1, eta] (lambda_PV(tf)=1);
+V = V_max triggers the singular -> batch exit; the batch enters as a terminal cost
+(objective_batch differentiated with jax.grad), never integrated forward (unstable costate).
+"""
 import jax
 import diffrax
 import jax.numpy as jnp
@@ -5,6 +19,8 @@ from .odes import vector_field, get_phi, l_to_orig, objective_batch
 from .Fsin import get_Fsin, get_Fsin_unconstrained
 
 def solve_and_get_residuals(xtf_guess, args):
+    """Pure singular arc: integrate the singular feedback BACKWARD from tf (lambda(tf)=[0,0,1,0])
+    to t=0. Unknown = x(tf); residual = x(0) - x0 (4). args = (tf, x0, S_F, V_max, Fmin, Fmax)."""
     tf, x0, S_F, V_max, Fmin, Fmax = args
     ltf = jnp.array([0.0, 0.0, 1.0, 0.0])
     ytf = jnp.concatenate([xtf_guess, ltf])
@@ -37,6 +53,9 @@ def solve_and_get_residuals(xtf_guess, args):
     ])
 
 def solve_and_get_residuals_sing(guess, args):
+    """Singular arc [0, t_switch] with the batch as a terminal cost. Unknown = [lambda(0)(4), t_switch].
+    Residuals (6): lambda_PV(0)=1; phi(0)=0; phidot(0)=0 (start on the singular surface);
+    V(t_switch)=V_max; costate continuity (XV, SV) into the batch (l_to_orig o grad objective_batch)."""
     tf, x0_log, S_F, V_max, F_min, F_max = args
     lam0 = guess[:4]
     t_switch = jnp.clip(guess[4], 0.5, tf - 0.05)         # keep 0 < t_switch < tf
@@ -71,6 +90,8 @@ def solve_and_get_residuals_sing(guess, args):
 
 
 def solve_and_get_residuals_batch(l4_tf_guess, args):
+    """Batch arc integrated BACKWARD from tf (lambda(tf)=[0,0,1,l4]) to t_switch. Unknown = lambda_V(tf);
+    residual = phi(t_switch) = 0. args = (tf, x0, S_F, xtf, t_switch, V_max, Fmin, Fmax)."""
     tf, x0, S_F, xtf, t_switch, V_max, Fmin, Fmax = args
     ltf = jnp.array([0.0, 0.0, 1.0, l4_tf_guess])
     ytf = jnp.concatenate([xtf, ltf])
@@ -99,6 +120,8 @@ def solve_and_get_residuals_batch(l4_tf_guess, args):
     ])
 
 def solve_and_get_residuals_sing_and_batch(l4_tf_guess, args):
+    """Batch (tf -> t_switch) then singular (t_switch -> 0), BACKWARD. Unknown = lambda_V(tf);
+    residual = phi(t_switch) = 0 (singular-entry condition at the junction)."""
     tf, x0, S_F, xtf, t_switch, V_max, Fmin, Fmax = args
     ltf = jnp.array([0.0, 0.0, 1.0, l4_tf_guess])
     ytf = jnp.concatenate([xtf, ltf])
@@ -189,14 +212,17 @@ def solve_and_get_residuals_bang_sing_batch(guess, args):
 
 @jax.jit
 def loss_fn(xtf_guess, args):
+    """Sum-of-squares of solve_and_get_residuals (least-squares objective)."""
     res = solve_and_get_residuals(xtf_guess, args)
     return jnp.sum(res**2)
 
 def loss_fn_batch(final_guess, args):
+    """Sum-of-squares of solve_and_get_residuals_batch."""
     res = solve_and_get_residuals_batch(final_guess, args)
     return jnp.sum(res**2)
 
 def loss_fn_sing_and_batch(final_guess, args):
+    """Sum-of-squares of solve_and_get_residuals_sing_and_batch (prints the residual for debugging)."""
     res = solve_and_get_residuals_sing_and_batch(final_guess, args)
     jax.debug.print("res{res}", res=res)
     return jnp.sum(res**2)

@@ -24,6 +24,7 @@ from scipy.sparse import coo_array
 
 
 class CollocParams(NamedTuple):
+    """Sizes and problem data for the Stage-1 collocation NLP (closed over at jit sites)."""
     N: int          # number of intervals
     nx: int         # number of states
     h: float        # step size tf / N
@@ -34,18 +35,23 @@ class CollocParams(NamedTuple):
 
 
 def unpack(z, p):
+    """Split the decision vector z = [x_0..x_N, F_0..F_{N-1}] into states X (N+1, nx)
+    and feeds U (N,)."""
     X = z[:p.nX].reshape(p.N + 1, p.nx)
     U = z[p.nX:]
     return X, U
 
 
 def objective(z, p):
+    """NLP objective -PV(tf) = -X[-1, 2]; minimising it maximises the final product."""
     X, _ = unpack(z, p)
     return -X[-1, 2]                                 # minimise -PV(tf) == maximise PV(tf)
 
 
 # equality constraints: forward-Euler defects d_k = x_{k+1} - x_k - h f(x_k, F_k)
 def constraints(z, p):
+    """Forward-Euler defects d_k = x_{k+1} - x_k - h f(x_k, F_k), flattened to (nx*N,).
+    Zero defects means the discrete trajectory satisfies the dynamics."""
     X, U = unpack(z, p)
     f = jax.vmap(p.f, in_axes=(0, 0, None))(X[:-1], U, p.S_F)          # (N, nx)
     return (X[1:] - X[:-1] - p.h * f).ravel()                         # (nx*N,)
@@ -62,6 +68,8 @@ def _make_blocks(states_ode_fn):
 
 
 def jac_defects(z, p):
+    """Sparse (COO) Jacobian of the Euler defects. Each defect d_k touches only x_k,
+    x_{k+1} and F_k, so only those per-step blocks are autodiffed and scattered."""
     X, U = unpack(jnp.asarray(z), p)
     A, B, C = _make_blocks(p.f)(X[:-1], X[1:], U, p.h, p.S_F)
 

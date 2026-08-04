@@ -1,3 +1,8 @@
+"""Specific rates -- growth (mu), substrate uptake (sigma) and product formation (pi)
+-- for the substrate+product inhibition case. From Shin & Lim, "Fed-Batch Cultures",
+example 13.E.3 (ethanol from glucose by S. cerevisiae). Each is a function of the
+substrate S and product P concentrations.
+"""
 import jax
 from jaxtyping import Array, Float, ScalarLike
 import jax.numpy as jnp
