@@ -24,7 +24,7 @@ from cyipopt import minimize_ipopt
 from fedopt.substrate_product_inhibition.shooting import solve_and_get_residuals_ms
 from fedopt.substrate_product_inhibition.odes import states_ode, vector_field, get_phi, vf_states
 from fedopt.substrate_product_inhibition.Fsin import get_Fsin_unconstrained
-from fedopt.hybrid import CollocParams, unpack, objective, constraints, jac_defects, detect_switches
+from fedopt.collocation import CollocParams, unpack, objective, constraints, jac_defects, detect_switches
 
 jax.config.update("jax_enable_x64", True)
 
