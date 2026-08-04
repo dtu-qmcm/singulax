@@ -1,13 +1,16 @@
+"""
+Hybrid two-stage approach to solve the case where the optimal control structure is Fmax-> Fsin->Fb(=0).  
+"""
 import jax
 import jax.numpy as jnp
 import numpy as np
 import diffrax
 import optimistix as optx
 from cyipopt import minimize_ipopt
-from fedopt.shooting import solve_and_get_residuals_sing, solve_and_get_residuals_bang_sing_batch
-from fedopt.odes import f_vec_orig, g_vec_orig, vf_states, vector_field, get_phi, l_to_orig, batch_phys_vf, objective_batch
-from fedopt.Fsin import get_Fsin_unconstrained
-from fedopt.hybrid import CollocParams, unpack, objective, constraints, jac_defects
+from fedopt.substrate_inhibition.shooting import solve_and_get_residuals_sing, solve_and_get_residuals_bang_sing_batch
+from fedopt.substrate_inhibition.odes import states_ode_phys, vf_states, vector_field, get_phi, l_to_orig, batch_phys_vf, objective_batch
+from fedopt.substrate_inhibition.Fsin import get_Fsin_unconstrained
+from fedopt.hybrid import CollocParams, unpack, objective, constraints, jac_defects, detect_switches
 import os
 import matplotlib
 matplotlib.use("Agg")                      
@@ -24,31 +27,10 @@ x0_log = jnp.array([10.0, jnp.log(S0), 0.0, 1.0])           # [XV, log SV, PV, V
 
 N = 400; tf = t_end; h = tf / N; nx = 4; nX = (N + 1) * nx; nz = nX + N
 
-
-def states_ode_phys(x, F, S_F):
-    return f_vec_orig(x) + g_vec_orig(x, S_F) * F
-
 p = CollocParams(N=N, nx=nx, h=h, nX=nX, nz=nz, S_F=S_F, f=states_ode_phys)
 obj_jit = jax.jit(lambda z: objective(z, p))
 grad_jit = jax.jit(jax.grad(lambda z: objective(z, p)))
 con_jit = jax.jit(lambda z: constraints(z, p))
-
-
-def detect_switches(U, t_ctrl, F_min, F_max, tol=1e-2, min_dwell=3):
-    """Switch times from the FEED profile alone (problem-agnostic; no state/kinetic knowledge).
-    Classify each node: 2 = bang at F_max, 0 = bang at F_min / batch, 1 = singular (interior)."""
-    reg = np.where(U > F_max - tol, 2, np.where(U < F_min + tol, 0, 1))
-    i = 0                                             # debounce: absorb runs shorter than min_dwell
-    while i < len(reg):
-        j = i
-        while j < len(reg) and reg[j] == reg[i]:
-            j += 1
-        if j - i < min_dwell and i > 0:
-            reg[i:j] = reg[i - 1]
-        i = j
-    chg = np.where(np.diff(reg) != 0)[0]
-    return t_ctrl[chg + 1], [int(reg[0])] + [int(reg[c + 1]) for c in chg]
-
 
 if __name__ == "__main__":
     # ===== STAGE 1: physical-SV collocation (only to seed lambda(0), t_switch) =====
@@ -133,7 +115,6 @@ if __name__ == "__main__":
     fig1.tight_layout(); fig1.savefig(os.path.join(here, "hybrid_bsb_stage1.png"), dpi=130)
 
     # ---------- STAGE 2: reconstruct bang -> singular -> batch, then plot ----------
-    from fedopt.odes import batch_phys_vf, objective_batch, l_to_orig
     sc2 = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-14)
     bang_vf = lambda t, y, a: vector_field(t, y, (S_F, F_max))
     sing_vf = lambda t, y, a: vector_field(t, y, (S_F, get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max))))
@@ -184,6 +165,3 @@ if __name__ == "__main__":
                   % (t1_opt, t2_opt, float(jnp.linalg.norm(res_r))))
     fig2.tight_layout(); fig2.savefig(os.path.join(here, "hybrid_bsb_stage2.png"), dpi=130)
     print("saved: hybrid_bsb_stage1.png, hybrid_bsb_stage2.png")
-
-
-
