@@ -5,10 +5,6 @@
 ![JAX](https://img.shields.io/badge/JAX-0.10-orange)
 ![Status](https://img.shields.io/badge/status-in--progress-orange)
 
-**Optimal feeding policies for fed-batch fermentation, computed from Pontryagin's Maximum
-Principle — including the singular arcs where the maximum principle on its own determines
-nothing.**
-
 Singulax solves the fed-batch bioreactor problem *"how should I feed substrate over time to
 maximise product at harvest?"* Because the feed rate enters the dynamics linearly, the optimal
 policy is a sequence of arcs — full feed, no feed, and **singular** arcs on which the classical
