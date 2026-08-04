@@ -24,8 +24,9 @@ def get_Fsin_unconstrained(y, args):
 
     BUG / TODO: term_A below computes only (d[f,g]/dx) f and is MISSING the second term
     -(df/dx)[f,g] of [f,[f,g]] -- the same omission already fixed in the SPI version
-    (fedopt.substrate_product_inhibition.Fsin). Add it before trusting this feed.
-    y = [x, lambda];  args = (S_F, V_max, Fmin, Fmax)."""
+    (fedopt.substrate_product_inhibition.Fsin). Applying the fix here left PV(tf) unchanged
+    but blew up the shoot residual (~3e-4 -> ~4e-2), so it needs a re-tuned seed before
+    re-enabling. y = [x, lambda];  args = (S_F, V_max, Fmin, Fmax)."""
     S_F, V_max, Fmin, Fmax = args
     x, l = jnp.split(y, 2)
     SV = jnp.exp(x[1])
