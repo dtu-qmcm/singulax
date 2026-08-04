@@ -9,7 +9,7 @@ import numpy as np
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from diffrax import ODETerm, Kvaerno5, SaveAt, diffeqsolve, PIDController
-from fedopt.si_analytical import states_analytical_sol, calculate_real_feed
+from fedopt.substrate_inhibition.analytical import states_analytical_sol, calculate_real_feed
 
 jax.config.update("jax_enable_x64", True)
 
