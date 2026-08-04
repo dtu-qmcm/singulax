@@ -1,3 +1,6 @@
+"""
+Indirect PMP shooting approach to solve the case where the optimal control structure is F=Fsin (S0=S*).
+"""
 import optimistix as optx
 import os
 import jax
@@ -6,10 +9,10 @@ import jax.numpy as jnp
 from diffrax import ODETerm, Dopri5, SaveAt, diffeqsolve, Kvaerno5
 import numpy as np
 import matplotlib.pyplot as plt
-from fedopt.si_analytical import states_analytical_sol
-from fedopt.shooting import loss_fn
-from fedopt.odes import vector_field, get_phi
-from fedopt.Fsin import get_Fsin
+from fedopt.substrate_inhibition.analytical import states_analytical_sol
+from fedopt.substrate_inhibition.shooting import loss_fn
+from fedopt.substrate_inhibition.odes import vector_field, get_phi
+from fedopt.substrate_inhibition.Fsin import get_Fsin
 
 jax.config.update("jax_enable_x64", True)
 
