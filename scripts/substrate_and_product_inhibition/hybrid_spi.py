@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 import jax.numpy as jnp
 import numpy as np
 import optimistix as optx
+from cycler import cycler
 from cyipopt import minimize_ipopt
 from fedopt.substrate_product_inhibition.shooting import solve_and_get_residuals_ms
 from fedopt.substrate_product_inhibition.odes import states_ode, vector_field, get_phi, vf_states
@@ -76,30 +77,65 @@ if __name__ == "__main__":
     print("regime sequence      =", seq, "  (2=Fmax bang, 1=singular, 0=Fmin/batch)")
 
     # ---- Stage 1 plot ----
+    plt.rcParams.update({
+    "font.family": "serif",
+    "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+    "mathtext.fontset": "stix",
+
+    "font.size": 9,
+    "axes.labelsize": 9,
+    "axes.titlesize": 9,
+    "legend.fontsize": 8,
+    "xtick.labelsize": 8,
+    "ytick.labelsize": 8,
+
+    "axes.linewidth": 0.8,
+    "lines.linewidth": 1.8,
+
+    "legend.frameon": False,
+
+    "figure.dpi": 300,
+    "savefig.dpi": 600,
+
+    "axes.grid": True,
+    "grid.alpha": 0.25,
+    "grid.linestyle": "--",
+    })
+    
+    oi = {
+    "orange":       "#E69F00",  
+    "sky_blue":     "#56B4E9",  
+    "bluish_green": "#009E73",  
+    "vermillion":   "#D55E00",
+    "black":        "#000000",
+    "reddish_purple": "#CC79A7"   
+    }
     here = os.path.dirname(os.path.abspath(__file__))
-    fig, ax = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
+    fig, ax = plt.subplots(
+    3, 1,
+    figsize=(6.5, 7),
+    sharex=True,
+    constrained_layout=True
+    )
     ax = ax.ravel()
-    ax[0].plot(t_grid, X_opt[:, 0], label="(XV)")
-    ax[0].plot(t_grid, X_opt[:, 1], label="(SV)")
-    ax[0].plot(t_grid, X_opt[:, 2]/5, label="(PV)/5")
-    ax[0].plot(t_grid, X_opt[:, 3], label="V")
-    ax[0].set_title("State variables")
-    ax[0].set_xlabel("Time (h)")
-    ax[0].set_ylabel("State (g or V)")
-    ax[0].legend()
-    ax[1].plot(t_grid, S, label="S", color="orange")
-    ax[1].plot(t_grid, P, label="P", color="green")
-    ax[1].set_title("S and P concentration")
-    ax[1].set_xlabel("Time (h)")
-    ax[1].set_ylabel("Concentration (g/L)")
-    ax[1].legend()
-    ax[2].step(t_ctrl, U_opt,  label="F")
-    ax[2].set_ylim(F_min - 0.1, F_max + 0.1)
+    ax[0].plot(t_grid, X_opt[:,0], label=r"$XV$", color=oi["sky_blue"])
+    ax[0].plot(t_grid, X_opt[:,1], label=r"$SV$", color=oi["orange"])
+    ax[0].plot(t_grid, X_opt[:,2]/5, label=r"$PV/5$", color=oi["bluish_green"])
+    ax[0].plot(t_grid, X_opt[:,3], label=r"$V$", color=oi["vermillion"])
+    ax[0].set_ylabel("Mass (g), Volume (L)")
+    ax[0].legend(ncol=4, loc="best")
+
+    ax[1].plot(t_grid, S, label=r"$S$", color=oi["orange"], ls="--", lw=1.8)
+    ax[1].plot(t_grid, P, label=r"$P$", color=oi["bluish_green"], ls="--", lw=1.8)
+    ax[1].set_ylabel("Concentration (g L$^{-1}$)")
+    ax[1].legend(ncol=2, loc="best")
+
+    ax[2].step(t_ctrl,U_opt,where="post",color=oi["black"])
+    ax[2].set_ylabel(r"$F$ (L h$^{-1}$)")
     ax[2].set_xlabel("Time (h)")
-    ax[2].set_ylabel("F (L/h)")
-    fig.suptitle("SPI Stage 1")
-    fig.tight_layout()
-    fig.savefig(os.path.join(here, "spi_stage1.png"), dpi=130)
+    ax[2].set_ylim(F_min - 0.1, F_max + 0.1)
+
+    fig.savefig(os.path.join(here, "spi_stage1.png"), dpi=600, bbox_inches="tight")
     print("saved spi_stage1.png")
 
     # ===== STAGE 2: shooting =====
@@ -182,47 +218,48 @@ if __name__ == "__main__":
     S_all = Yf[:, 1] / Yf[:, 3]; P_all = Yf[:, 2] / Yf[:, 3]
     phi_all = Yf[:, 5] * S_F + Yf[:, 7]
 
-    fig, axd = plt.subplot_mosaic([["state", "SP"], ["phi", "F"], ["adj", "adj"]], figsize=(13, 11))
-    axd["state"].plot(T, Yf[:, 0], label="(XV)")
-    axd["state"].plot(T, Yf[:, 1], label="(SV)")
-    axd["state"].plot(T, Yf[:, 2] / 5, label="(PV)/5")
-    axd["state"].plot(T, Yf[:, 3], label="V")
-    axd["state"].set_title("State variables")
-    axd["state"].set_xlabel("Time (h)")
-    axd["state"].set_ylabel("State (g or V)")
-    axd["state"].legend()
+    fig, axd = plt.subplot_mosaic(
+        [["state", "SP"],
+         ["phi",   "F"],
+         ["adj",   "adj"]],
+        figsize=(7,8),
+        constrained_layout=True
+    )
+    axd["state"].plot(T, Yf[:, 0], label=r"$XV$", color=oi["sky_blue"])
+    axd["state"].plot(T, Yf[:, 1], label=r"$SV$",color=oi["orange"] )
+    axd["state"].plot(T, Yf[:, 2] / 5, label=r"$PV / 5$", color=oi["bluish_green"])
+    axd["state"].plot(T, Yf[:, 3], label=r"$V$", color=oi["vermillion"])
+    axd["state"].set_ylabel("Mass (g), Volume (L)")
+    axd["state"].legend(ncol=4, loc="best")
 
-    axd["SP"].plot(T, S_all, label="S", color="orange")
-    axd["SP"].plot(T, P_all, label="P", color="green")
-    axd["SP"].set_title("S and P concentration")
-    axd["SP"].set_xlabel("Time (h)")
-    axd["SP"].set_ylabel("Concentration (g/L)")
-    axd["SP"].legend()
+    axd["SP"].plot(T, S_all, label="S", color=oi["orange"], ls="--", lw=1.8)
+    axd["SP"].plot(T, P_all, label="P", color=oi["bluish_green"], ls="--", lw=1.8)
+    axd["SP"].set_ylabel(r"Concentration (g L$^{-1}$)")
+    axd["SP"].legend(ncol=2, loc="best")
 
-    axd["phi"].plot(T, phi_all, "purple")
-    axd["phi"].axhline(0, color="k", lw=0.7)
-    axd["phi"].set_title("Switching function, $\\phi$")
-    axd["phi"].set_xlabel("Time (h)")
+    axd["phi"].plot(T, phi_all, color=oi["reddish_purple"])
+    axd["phi"].axhline(0,color=oi["black"],ls="--", lw=0.9)
     axd["phi"].set_ylabel("$\\phi$")
+    axd["phi"].set_xlabel("Time (h)")
     
-    axd["F"].plot(T, Ff, "m")
+    axd["F"].step(T,Ff,where="post",color=oi["black"])
     axd["F"].set_ylim(F_min - 0.1, F_max + 0.1)
-    axd["F"].set_title("Feed flow rate")
-    axd["F"].set_ylabel("F (L/h)")
+    axd["F"].set_ylabel("F (L h$^{-1}$)")
     axd["F"].set_xlabel("Time (h)")
-    
-    for k, lb in enumerate([r"$\lambda_{XV}$", r"$\lambda_{SV}$", r"$\lambda_{PV}$", r"$\lambda_V$"]):
-        axd["adj"].plot(T, Yf[:, 4 + k], label=lb)
-    axd["adj"].set_title("Adjoints")
+
+    axd["adj"].plot(T, Yf[:, 4], label=r"$\lambda_1$ ($XV$)", color=oi["sky_blue"], ls="-")
+    axd["adj"].plot(T, Yf[:, 5], label=r"$\lambda_2$ ($SV$)", color=oi["orange"], ls="--")
+    axd["adj"].plot(T, Yf[:, 6], label=r"$\lambda_3$ ($PV$)", color=oi["bluish_green"], ls="-.")
+    axd["adj"].plot(T, Yf[:, 7], label=r"$\lambda_4$ ($V$)", color=oi["vermillion"], ls=":")
+
     axd["adj"].set_xlabel("Time (h)")
-    axd["adj"].set_ylabel("$\\lambda$")
-    axd["adj"].legend(ncol=4)
+    axd["adj"].set_ylabel(r"$\lambda$")
+    axd["adj"].legend(ncol=4, frameon=False, loc="upper right")
+
     # dashed vertical lines at the switching times, in every subplot
     for a in axd.values():
         for tsw in sw_eff:
-            a.axvline(float(tsw), ls="--", color="gray", lw=0.8)
-    fig.suptitle("SPI Stage 2")
-    fig.tight_layout(); fig.savefig(os.path.join(here, "spi_stage2.png"), dpi=130)
+            a.axvline(tsw,color="0.5",ls=":",lw=0.8)
+    fig.savefig(os.path.join(here, "spi_stage2.png"), dpi=600, bbox_inches="tight")
     print("saved spi_stage2.png")
-    
 
