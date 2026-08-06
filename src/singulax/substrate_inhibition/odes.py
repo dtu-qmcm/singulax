@@ -14,7 +14,7 @@ obeys lambda_dot = -dH/dx and phi = S_F*lambda_SV + lambda_V picks F_max when ph
 import jax
 import diffrax
 import jax.numpy as jnp
-from .kinetics import mu, sigma, pi
+from substrate_inhibition.kinetics import mu, sigma, pi
 
 def f_vec(x_val):
     """Drift f(x) in LOG-SV coords x = [XV, log(SV), PV, V] (SV = exp(x[1]))."""
