@@ -30,7 +30,7 @@ Requires Python ≥ 3.12.
 pip install singulax
 ```
 
-Or with [uv](https://github.com/astral-sh/uv) — add Singulax to an existing project, or install
+Or with [uv](https://github.com/astral-sh/uv), you can add Singulax to an existing project, or install
 it into the active environment:
 
 ```sh
