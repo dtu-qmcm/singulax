@@ -13,7 +13,7 @@ Shin & Lim, who minimise -PV).
 import jax
 import diffrax
 import jax.numpy as jnp
-from .kinetics import mu, sigma, pi
+from substrate_product_inhibition.kinetics import mu, sigma, pi
 
 def f_vec(x_val):
     """Drift term f(x) of the control-affine dynamics; x = [XV, SV, PV, V] (physical)."""
