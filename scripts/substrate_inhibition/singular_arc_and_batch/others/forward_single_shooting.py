@@ -19,10 +19,10 @@ import os
 from diffrax import ODETerm, SaveAt, diffeqsolve, PIDController
 from scipy.integrate import solve_ivp
 
-from fedopt.odes import vector_field
-from fedopt.si_analytical import states_analytical_sol, volume_cond
-from fedopt.shooting import loss_fn_batch
-from fedopt.Fsin import get_Fsin_unconstrained
+from singulax.substrate_inhibition.odes import vector_field
+from singulax.substrate_inhibition.analytical import states_analytical_sol, volume_cond
+from singulax.substrate_inhibition.shooting import loss_fn_batch
+from singulax.substrate_inhibition.Fsin import get_Fsin_unconstrained
 
 jax.config.update("jax_enable_x64", True)
 

@@ -8,8 +8,8 @@ import os
 import jax.numpy as jnp
 from diffrax import ODETerm, Kvaerno5, SaveAt, diffeqsolve
 import matplotlib.pyplot as plt
-from fedopt.substrate_inhibition.analytical import states_analytical_sol, calculate_real_feed
-from fedopt.substrate_inhibition.odes import hybrid_fedbatch, get_phi
+from singulax.substrate_inhibition.analytical import states_analytical_sol, calculate_real_feed
+from singulax.substrate_inhibition.odes import hybrid_fedbatch, get_phi
 
 
 jax.config.update("jax_enable_x64", True)

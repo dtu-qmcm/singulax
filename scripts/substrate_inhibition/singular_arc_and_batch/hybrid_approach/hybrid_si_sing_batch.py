@@ -7,10 +7,10 @@ import numpy as np
 import diffrax
 import optimistix as optx
 from cyipopt import minimize_ipopt
-from fedopt.substrate_inhibition.shooting import solve_and_get_residuals_sing
-from fedopt.substrate_inhibition.odes import states_ode_phys, vf_states, vector_field, get_phi, l_to_orig, batch_phys_vf, objective_batch
-from fedopt.substrate_inhibition.Fsin import get_Fsin_unconstrained
-from fedopt.collocation import CollocParams, unpack, objective, constraints, jac_defects
+from singulax.substrate_inhibition.shooting import solve_and_get_residuals_sing
+from singulax.substrate_inhibition.odes import states_ode_phys, vf_states, vector_field, get_phi, l_to_orig, batch_phys_vf, objective_batch
+from singulax.substrate_inhibition.Fsin import get_Fsin_unconstrained
+from singulax.collocation import CollocParams, unpack, objective, constraints, jac_defects
 import os
 import matplotlib
 matplotlib.use("Agg")                      

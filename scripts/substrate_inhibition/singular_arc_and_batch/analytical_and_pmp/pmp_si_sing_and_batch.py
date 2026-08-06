@@ -8,10 +8,10 @@ import diffrax
 import jax.numpy as jnp
 from diffrax import ODETerm, Kvaerno5, SaveAt, diffeqsolve, Dopri5
 import matplotlib.pyplot as plt
-from fedopt.substrate_inhibition.analytical import states_analytical_sol, calculate_real_feed, volume_cond
-from fedopt.substrate_inhibition.shooting import loss_fn_batch
-from fedopt.substrate_inhibition.odes import vector_field, get_phi, get_dldt
-from fedopt.substrate_inhibition.Fsin import get_Fsin_unconstrained, get_Fsin
+from singulax.substrate_inhibition.analytical import states_analytical_sol, calculate_real_feed, volume_cond
+from singulax.substrate_inhibition.shooting import loss_fn_batch
+from singulax.substrate_inhibition.odes import vector_field, get_phi, get_dldt
+from singulax.substrate_inhibition.Fsin import get_Fsin_unconstrained, get_Fsin
 
 jax.config.update("jax_enable_x64", True)
 
@@ -261,7 +261,7 @@ if __name__ == "__main__":
         SV_plot = jnp.exp(y_plot[:, 1])
         S_plot = SV_plot / y_plot[:, 3]
         X_plot = y_plot[:, 0] / y_plot[:, 3]  # biomass concentration
-        from fedopt.si_kinetics import mu, pi, sigma
+        from singulax.substrate_inhibition.kinetics import mu, pi, sigma
         mu_plot    = jax.vmap(mu)(S_plot)
         sigma_plot = jax.vmap(sigma)(S_plot)
         pi_plot    = jax.vmap(pi)(S_plot)

@@ -3,7 +3,7 @@
 Two coordinate conventions coexist:
   * f_vec / g_vec / vf_states use LOG-substrate state  x = [XV, log(SV), PV, V]
     (so SV = exp(x[1])); this keeps SV strictly positive so the Stage-1 Euler NLP
-    cannot drive it negative (see the fedopt.hybrid module docstring).
+    cannot drive it negative (see the singulax.collocation module docstring).
   * f_vec_orig / g_vec_orig are the PHYSICAL-SV versions x = [XV, SV, PV, V], used
     for the costate and the Lie brackets; l_to_orig maps the SV-costate between them.
 
@@ -14,7 +14,7 @@ obeys lambda_dot = -dH/dx and phi = S_F*lambda_SV + lambda_V picks F_max when ph
 import jax
 import diffrax
 import jax.numpy as jnp
-from substrate_inhibition.kinetics import mu, sigma, pi
+from singulax.substrate_inhibition.kinetics import mu, sigma, pi
 
 def f_vec(x_val):
     """Drift f(x) in LOG-SV coords x = [XV, log(SV), PV, V] (SV = exp(x[1]))."""

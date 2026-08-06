@@ -1,7 +1,7 @@
 """Generic Stage-1 direct-collocation machinery for control-affine fed-batch OCPs.
 
 The state RHS is a REQUIRED parameter (`CollocParams.f`, signature `f(x, F, S_F)`): each caller
-passes the dynamics it wants. Use the log(SV) RHS (`fedopt.odes.states_ode`) for cases where the
+passes the dynamics it wants. Use the log(SV) RHS (`singulax.substrate_inhibition.odes.states_ode`) for cases where the
 substrate stays away from 0 (e.g. the pure singular arc), and a PHYSICAL-SV RHS when the substrate
 exhausts (SV -> 0, e.g. singular-arc+batch) -- in log(SV) the forward-Euler NLP can "consume more
 substrate than exists" (SV = exp() is never negative) and returns an infeasible seed; physical SV

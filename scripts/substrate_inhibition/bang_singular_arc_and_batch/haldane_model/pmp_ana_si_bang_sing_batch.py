@@ -7,9 +7,9 @@ import numpy as np
 import jax.numpy as jnp
 import jax
 from scipy.optimize import fsolve
-from fedopt.substrate_inhibition.analytical import states_analytical_sol, states_analytical_sol_batch, states_analytical_sol_bang, states_analytical_sol_singular, calculate_real_feed, volume_cond, analytical_sol_bang, analytical_sol_batch, analytical_sol_singular
-from fedopt.substrate_inhibition.odes import get_phi, vector_field
-from fedopt.substrate_inhibition.Fsin import get_Fsin_unconstrained, get_Fsin
+from singulax.substrate_inhibition.analytical import states_analytical_sol, states_analytical_sol_batch, states_analytical_sol_bang, states_analytical_sol_singular, calculate_real_feed, volume_cond, analytical_sol_bang, analytical_sol_batch, analytical_sol_singular
+from singulax.substrate_inhibition.odes import get_phi, vector_field
+from singulax.substrate_inhibition.Fsin import get_Fsin_unconstrained, get_Fsin
 
 jax.config.update("jax_enable_x64", True)
 

@@ -6,7 +6,7 @@ with the Lie-bracket convention  [a, b] = (db/dx) a - (da/dx) b.
 """
 import jax
 import jax.numpy as jnp
-from substrate_product_inhibition.odes import f_vec, g_vec
+from singulax.substrate_product_inhibition.odes import f_vec, g_vec
 
 def lie_bracket_fg(x_val, S_F):
     """First Lie bracket [f, g] = (dg/dx) f - (df/dx) g. Here dg/dx = 0 (g is constant)."""

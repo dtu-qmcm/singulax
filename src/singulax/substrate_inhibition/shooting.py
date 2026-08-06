@@ -15,8 +15,8 @@ V = V_max triggers the singular -> batch exit; the batch enters as a terminal co
 import jax
 import diffrax
 import jax.numpy as jnp
-from substrate_inhibition.odes import vector_field, get_phi, l_to_orig, objective_batch
-from substrate_inhibition.Fsin import get_Fsin, get_Fsin_unconstrained
+from singulax.substrate_inhibition.odes import vector_field, get_phi, l_to_orig, objective_batch
+from singulax.substrate_inhibition.Fsin import get_Fsin, get_Fsin_unconstrained
 
 def solve_and_get_residuals(xtf_guess, args):
     """Pure singular arc: integrate the singular feedback BACKWARD from tf (lambda(tf)=[0,0,1,0])

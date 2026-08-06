@@ -1,8 +1,8 @@
 import jax
 import jax.numpy as jnp
 import diffrax
-from substrate_product_inhibition.odes import vector_field, get_phi, vf_states
-from substrate_product_inhibition.Fsin import get_Fsin_unconstrained
+from singulax.substrate_product_inhibition.odes import vector_field, get_phi, vf_states
+from singulax.substrate_product_inhibition.Fsin import get_Fsin_unconstrained
 
 
 def solve_and_get_residuals_ms(guess, args):
