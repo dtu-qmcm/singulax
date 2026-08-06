@@ -1,11 +1,11 @@
 """Substrate + product inhibition case (Shin & Lim ethanol fermentation)."""
-from .kinetics import mu, sigma, pi
-from .odes import (
+from substrate_product_inhibition.kinetics import mu, sigma, pi
+from substrate_product_inhibition.odes import (
     f_vec, g_vec, vf_states, get_dldt, get_phi,
     vector_field, states_ode, costate_ode,
 )
-from .Fsin import lie_bracket_fg, inner_bracket, get_Fsin, get_Fsin_unconstrained
-from .shooting import solve_and_get_residuals_ms
+from substrate_product_inhibition.Fsin import lie_bracket_fg, inner_bracket, get_Fsin, get_Fsin_unconstrained
+from substrate_product_inhibition.shooting import solve_and_get_residuals_ms
 
 __all__ = [
     "mu", "sigma", "pi",
