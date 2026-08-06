@@ -6,7 +6,7 @@ with the Lie-bracket convention  [a, b] = (db/dx) a - (da/dx) b.
 """
 import jax
 import jax.numpy as jnp
-from .odes import f_vec_orig, g_vec_orig, l_to_orig
+from substrate_inhibition.odes import f_vec_orig, g_vec_orig, l_to_orig
 
 def lie_bracket_fg(x_val, S_F):
     """First Lie bracket [f, g] = (dg/dx) f - (df/dx) g in physical-SV coords (dg/dx = 0)."""
