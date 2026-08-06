@@ -30,23 +30,6 @@ Requires Python ≥ 3.12.
 pip install singulax
 ```
 
-Stage 1 of the hybrid solver calls [IPOPT](https://github.com/coin-or/Ipopt) through
-[cyipopt](https://github.com/mechmotum/cyipopt), which builds against the native IPOPT library.
-If the install fails while building it, install IPOPT from your system package manager or
-conda-forge first and retry. Everything except the direct stage — the singular feed law, the
-costate dynamics and the indirect PMP shooting — works without it.
-
-### From source
-
-To run the case studies or work on the package itself, clone the repository and use
-[uv](https://github.com/astral-sh/uv), which reproduces the development environment exactly:
-
-```sh
-git clone https://github.com/dtu-qmcm/singulax.git
-cd singulax
-uv sync
-```
-
 ## Usage
 
 ### As a library
