@@ -24,9 +24,81 @@ Built on [JAX](https://github.com/google/jax), [diffrax](https://github.com/patr
 
 ## Installation
 
+Requires Python ≥ 3.12.
+
 ```sh
 pip install singulax
 ```
+
+Stage 1 of the hybrid solver calls [IPOPT](https://github.com/coin-or/Ipopt) through
+[cyipopt](https://github.com/mechmotum/cyipopt), which builds against the native IPOPT library.
+If the install fails while building it, install IPOPT from your system package manager or
+conda-forge first and retry. Everything except the direct stage — the singular feed law, the
+costate dynamics and the indirect PMP shooting — works without it.
+
+### From source
+
+To run the case studies or work on the package itself, clone the repository and use
+[uv](https://github.com/astral-sh/uv), which reproduces the development environment exactly:
+
+```sh
+git clone https://github.com/dtu-qmcm/singulax.git
+cd singulax
+uv sync
+```
+
+## Usage
+
+### As a library
+
+Singulax exposes the building blocks of the optimal control problem: the state and costate
+dynamics, the switching function $\phi$, and the singular feed law derived from $\ddot{\phi}=0$.
+
+```python
+import jax
+jax.config.update("jax_enable_x64", True)   # required: the shooting residuals need float64
+
+import jax.numpy as jnp
+from singulax.substrate_product_inhibition import get_phi, get_Fsin, vector_field
+
+S_F, V_max, F_min, F_max = 150.0, 10.0, 0.0, 2.0
+
+x   = jnp.array([10.0, 5.0, 2.0, 3.0])      # [XV, SV, PV, V]
+lam = jnp.array([1.0, 0.05, 1.0, -7.5])     # costate
+y   = jnp.concatenate([x, lam])
+
+print("phi    =", get_phi(y))                                # switching function
+print("F_sing =", get_Fsin(y, (S_F, V_max, F_min, F_max)))   # singular feed
+print("ydot   =", vector_field(0.0, y, (S_F, 1.0)))          # augmented state-costate RHS
+```
+
+Enabling `jax_enable_x64` is not optional, and it must happen **before** any array is created.
+In float32 the shooting residuals cannot reach their convergence tolerance.
+
+Each inhibition case is a self-contained subpackage:
+
+| import | model |
+|---|---|
+| `singulax.substrate_inhibition` | Haldane kinetics $\mu(S)$ — has a closed-form singular feed |
+| `singulax.substrate_product_inhibition` | Shin & Lim ethanol kinetics $\mu(S,P)$ |
+| `singulax.collocation` | Stage-1 direct transcription, shared by both cases |
+
+Case-specific names (`mu`, `sigma`, `get_phi`, `get_Fsin`, `vector_field`, …) exist in **both**
+case subpackages and are deliberately not re-exported at the top level — import them from the
+relevant subpackage so it is always clear which model you are using.
+
+### Running the case studies
+
+The `scripts/` tree holds one runnable script per control structure. Each is self-contained,
+prints its Stage-1 and Stage-2 diagnostics, and writes PNG figures next to itself:
+
+```sh
+uv run python scripts/substrate_and_product_inhibition/hybrid_spi.py
+uv run python scripts/substrate_inhibition/singular_arc/hybrid_approach/hybrid_si_sing.py
+```
+
+Scripts under `analytical_sol/` and `analytical_and_pmp/` finish in seconds; the
+`hybrid_approach/` ones invoke IPOPT and take roughly one to five minutes.
 
 ---
 ## References
