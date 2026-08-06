@@ -22,6 +22,12 @@ nothing else.
 Built on [JAX](https://github.com/google/jax), [diffrax](https://github.com/patrick-kidger/diffrax),
 [optimistix](https://github.com/patrick-kidger/optimistix) and IPOPT.
 
+## Installation
+
+```sh
+pip install singulax
+```
+
 ---
 ## References
 
