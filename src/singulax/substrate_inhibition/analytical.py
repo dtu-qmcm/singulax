@@ -8,8 +8,8 @@ are the AUGMENTED state+costate RHS (8-dim, via vector_field); the *_singular / 
 *_bang suffix picks the feed for that arc (F_sing / 0 / F_max).
 """
 import jax.numpy as jnp
-from .kinetics import sigma
-from .odes import vf_states, vector_field
+from substrate_inhibition.kinetics import sigma
+from substrate_inhibition.odes import vf_states, vector_field
 
 def states_analytical_sol(t, y, args):
     """State RHS under the analytical singular feed, switched off once V >= V_max. args = (S_F, V_max)."""
