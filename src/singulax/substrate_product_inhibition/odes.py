@@ -13,17 +13,29 @@ Shin & Lim, who minimise -PV).
 import jax
 import diffrax
 import jax.numpy as jnp
-from singulax.substrate_product_inhibition.kinetics import mu, sigma, pi
+from singulax.substrate_product_inhibition.kinetics import (
+    mu, sigma, pi, KineticParams, DEFAULT_PARAMS,
+)
 
-def f_vec(x_val):
-    """Drift term f(x) of the control-affine dynamics; x = [XV, SV, PV, V] (physical)."""
+def params_from(args, n_fixed):
+    """KineticParams out of a diffrax `args` tuple: args[n_fixed] when present,
+    otherwise the literature values. Lets the pre-existing call sites that pass
+    (S_F, F) keep working while (S_F, F, params) selects a sampled parameter set."""
+    return args[n_fixed] if len(args) > n_fixed else DEFAULT_PARAMS
+
+def f_vec(x_val, params=DEFAULT_PARAMS):
+    """Drift term f(x) of the control-affine dynamics; x = [XV, SV, PV, V] (physical).
+
+    `params` is a KineticParams; the default is the Shin & Lim parameter set, so
+    f_vec(x) is unchanged from before. This is the ONLY place the kinetics are
+    called, so it is the single point the sampled parameters have to reach."""
     S = x_val[1] / x_val[3]
     P = x_val[2] / x_val[3]
 
     return jnp.array([
-        mu(S, P) * x_val[0],
-        (-sigma(S, P) * x_val[0]),
-        pi(S, P) * x_val[0],
+        mu(S, P, params.mu_max, params.k_p, params.k_s) * x_val[0],
+        (-sigma(S, P, params.Y_xs, params.mu_max, params.k_p, params.k_s) * x_val[0]),
+        pi(S, P, params.pi_max, params.k_p_pi, params.k_s_pi) * x_val[0],
         0.0
     ])
 
@@ -32,19 +44,22 @@ def g_vec(x_val, S_F):
     return jnp.array([0.0, S_F, 0.0, 1.0])
 
 def vf_states(t,y, args):
-    """State RHS xdot = f(x) + g(x)*F for a diffrax solve; args = (S_F, F)."""
-    S_F, F = args
-    dx_dt = f_vec(y) + g_vec(y, S_F) * F
+    """State RHS xdot = f(x) + g(x)*F for a diffrax solve;
+    args = (S_F, F) or (S_F, F, params)."""
+    S_F, F = args[0], args[1]
+    dx_dt = f_vec(y, params_from(args, 2)) + g_vec(y, S_F) * F
     return dx_dt
 
 def get_dldt(t, y, args):
     """Costate RHS lambda_dot = -dH/dx for the augmented state y = [x, lambda],
-    with H = lambda^T (f(x) + g(x) F); args = (S_F, F). Computed by autodiff of H."""
-    S_F, F = args
+    with H = lambda^T (f(x) + g(x) F); args = (S_F, F) or (S_F, F, params).
+    Computed by autodiff of H."""
+    S_F, F = args[0], args[1]
+    params = params_from(args, 2)
     x, l = jnp.split(y, 2)
     # Define the Hamiltonian: H = lambda^T * (f(x) + g(x)*F)
     def hamiltonian(x, S_F):
-        f = f_vec(x)
+        f = f_vec(x, params)
         g = g_vec(x, S_F)
         return l @ (f + g * F)
     
@@ -63,20 +78,24 @@ def get_phi(y):
 
 def vector_field(t, y, args):
     """Augmented RHS [xdot, lambda_dot] for the state-costate vector y = [x, lambda]
-    (used by the shooting integrations); F is fixed in args = (S_F, F)."""
+    (used by the shooting integrations); F is fixed in args = (S_F, F) or
+    (S_F, F, params)."""
     x, l = jnp.split(y, 2)
-    S_F, F = args
+    S_F, F = args[0], args[1]
 
-    dx_dt = f_vec(x) + g_vec(x, S_F) * F
+    dx_dt = f_vec(x, params_from(args, 2)) + g_vec(x, S_F) * F
     dl_dt = get_dldt(t,y, args)
 
     return jnp.concatenate([dx_dt, dl_dt])
 
 # Flat convention where x and F are distinct differentiable arguments
-def states_ode(x, F, S_F):
-    """State RHS with x, F, S_F as separate differentiable args (collocation/AD convention)."""
-    return vf_states(0.0, x, (S_F, F))
+def states_ode(x, F, S_F, params=DEFAULT_PARAMS):
+    """State RHS with x, F, S_F as separate differentiable args (collocation/AD convention).
 
-def costate_ode(y, S_F, F):
+    Bind the parameters for a sampled run with functools.partial before handing
+    this to CollocParams(f=...)."""
+    return vf_states(0.0, x, (S_F, F, params))
+
+def costate_ode(y, S_F, F, params=DEFAULT_PARAMS):
     """Costate RHS with (y, S_F, F) as separate args; thin wrapper over get_dldt."""
-    return get_dldt(0.0, y, (S_F, F))
+    return get_dldt(0.0, y, (S_F, F, params))

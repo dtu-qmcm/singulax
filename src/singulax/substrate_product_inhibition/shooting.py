@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import diffrax
-from singulax.substrate_product_inhibition.odes import vector_field, get_phi, vf_states
+from singulax.substrate_product_inhibition.odes import vector_field, get_phi, vf_states, params_from
 from singulax.substrate_product_inhibition.Fsin import get_Fsin_unconstrained
 
 
@@ -10,7 +10,8 @@ def solve_and_get_residuals_ms(guess, args):
 
     guess = [ node_0, ..., node_{M}  (each 8 = [x(4), lambda(4)]),  t1, ..., t_M ]
             with M = num_segments, so n_nodes = M+1 nodes at times [0, t1, ..., t_M].
-    args  = (num_segments, S_F, V_max, F_min, F_max, tf, x0, arc_u)
+    args  = (num_segments, S_F, V_max, F_min, F_max, tf, x0, arc_u[, params])
+            params is an optional trailing KineticParams; omitted means the literature values.
             arc_u[i] = control on segment i:  a float F for a bang,  None for the singular arc.
 
     Segments cover [0, t_M] (bang, bang, singular). The batch [t_M, tf] is NOT integrated as a
@@ -25,7 +26,8 @@ def solve_and_get_residuals_ms(guess, args):
       - phi = 0 at each interior switch node
       - phidot = 0 at the singular-entry node   (tangential entry)
     """
-    num_segments, S_F, V_max, F_min, F_max, tf, x0, arc_u = args
+    num_segments, S_F, V_max, F_min, F_max, tf, x0, arc_u = args[:8]
+    params = params_from(args, 8)
     n_nodes = num_segments + 1
     nodes = guess[:n_nodes * 8].reshape(n_nodes, 8)
     raw = jnp.clip(guess[n_nodes * 8:], 1e-2, tf - 1e-2)                  # [t1, ..., t_M]
@@ -34,7 +36,8 @@ def solve_and_get_residuals_ms(guess, args):
     shooting_nodes = jnp.concatenate([jnp.array([0.0]), switch_times])   # [0, t1, ..., t_M]
 
     sc = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-12)
-    vf_singular = lambda t, y, a: vector_field(t, y, (S_F, get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max))))
+    vf_singular = lambda t, y, a: vector_field(
+        t, y, (S_F, get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max, params)), params))
 
     # ---- continuity defects on the bang / bang / singular segments ----
     defects = []
@@ -44,7 +47,7 @@ def solve_and_get_residuals_ms(guess, args):
         sol = diffrax.diffeqsolve(
             diffrax.ODETerm(vfield), diffrax.Tsit5(),
             t0=shooting_nodes[i], t1=shooting_nodes[i + 1], y0=nodes[i], dt0=0.01,
-            args=(S_F, u),                                               # tuple, not a bare scalar
+            args=(S_F, u, params),                                       # tuple, not a bare scalar
             saveat=diffrax.SaveAt(t1=True), stepsize_controller=sc,
             max_steps=100000, throw=False, adjoint=diffrax.ForwardMode())
         y_end = sol.ys[-1]
@@ -58,7 +61,7 @@ def solve_and_get_residuals_ms(guess, args):
 
     def batch_PV(x_sw):
         s = diffrax.diffeqsolve(
-            diffrax.ODETerm(lambda t, x, a: vf_states(t, x, (S_F, 0.0))), diffrax.Tsit5(),
+            diffrax.ODETerm(lambda t, x, a: vf_states(t, x, (S_F, 0.0, params))), diffrax.Tsit5(),
             t0=t_M, t1=tf, y0=x_sw, dt0=0.01, saveat=diffrax.SaveAt(t1=True),
             stepsize_controller=sc, max_steps=100000, throw=False, adjoint=diffrax.DirectAdjoint())
         return s.ys[-1][2]                                               # PV(tf)
@@ -69,7 +72,7 @@ def solve_and_get_residuals_ms(guess, args):
     # ---- boundary + switch conditions ----
     bc_start = nodes[0][:4] - x0                                         # x(0) = x0
     phi = jnp.array([get_phi(nodes[k]) for k in range(1, n_nodes - 1)])  # phi = 0 at interior switches
-    yd_entry = vector_field(shooting_nodes[-1 - 1], nodes[-2], (S_F, 0.0))   # phidot at the singular-entry node
+    yd_entry = vector_field(shooting_nodes[-1 - 1], nodes[-2], (S_F, 0.0, params))   # phidot at the singular-entry node
     phidot_entry = jnp.array([S_F * yd_entry[5] + yd_entry[7]])          # tangential entry: phidot = 0
 
     return jnp.concatenate([defects, bc_start, terminal, v_cond, phi, phidot_entry])
