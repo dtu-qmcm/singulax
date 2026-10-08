@@ -11,24 +11,24 @@ phi = dH/dF = S_F*lambda_SV + lambda_V selects F_max when phi > 0 (opposite sign
 Shin & Lim, who minimise -PV).
 """
 import jax
-import diffrax
 import jax.numpy as jnp
 from singulax.substrate_product_inhibition.kinetics import (
-    mu, sigma, pi, KineticParams, DEFAULT_PARAMS,
+    mu, sigma, pi, DEFAULT_PARAMS,
 )
 
 def params_from(args, n_fixed):
-    """KineticParams out of a diffrax `args` tuple: args[n_fixed] when present,
-    otherwise the literature values. Lets the pre-existing call sites that pass
-    (S_F, F) keep working while (S_F, F, params) selects a sampled parameter set."""
-    return args[n_fixed] if len(args) > n_fixed else DEFAULT_PARAMS
+    """KineticParams out of a diffrax `args` tuple: args[n_fixed].
+
+    diffrax fixes the RHS signature at (t, y, args), so the kinetics travel
+    inside that tuple rather than as their own argument."""
+    if len(args) <= n_fixed:
+        raise ValueError(
+            f"args has {len(args)} elements; KineticParams must be at index "
+            f"{n_fixed}. Pass (S_F, F, params) rather than (S_F, F).")
+    return args[n_fixed]
 
 def f_vec(x_val, params=DEFAULT_PARAMS):
-    """Drift term f(x) of the control-affine dynamics; x = [XV, SV, PV, V] (physical).
-
-    `params` is a KineticParams; the default is the Shin & Lim parameter set, so
-    f_vec(x) is unchanged from before. This is the ONLY place the kinetics are
-    called, so it is the single point the sampled parameters have to reach."""
+    """Drift term f(x) of the control-affine dynamics; x = [XV, SV, PV, V] (physical)."""
     S = x_val[1] / x_val[3]
     P = x_val[2] / x_val[3]
 
@@ -45,57 +45,53 @@ def g_vec(x_val, S_F):
     """Control vector g = [0, S_F, 0, 1] (constant): the feed adds substrate and volume."""
     return jnp.array([0.0, S_F, 0.0, 1.0])
 
-def vf_states(t,y, args):
+def vf_states(t, y, args):
     """State RHS xdot = f(x) + g(x)*F for a diffrax solve;
-    args = (S_F, F) or (S_F, F, params)."""
+    args = (S_F, F, params)."""
     S_F, F = args[0], args[1]
     dx_dt = f_vec(y, params_from(args, 2)) + g_vec(y, S_F) * F
     return dx_dt
 
 def get_dldt(t, y, args):
     """Costate RHS lambda_dot = -dH/dx for the augmented state y = [x, lambda],
-    with H = lambda^T (f(x) + g(x) F); args = (S_F, F) or (S_F, F, params).
+    with H = lambda^T (f(x) + g(x) F); args = (S_F, F, params).
     Computed by autodiff of H."""
     S_F, F = args[0], args[1]
     params = params_from(args, 2)
     x, l = jnp.split(y, 2)
     # Define the Hamiltonian: H = lambda^T * (f(x) + g(x)*F)
-    def hamiltonian(x, S_F):
-        f = f_vec(x, params)
-        g = g_vec(x, S_F)
+    def hamiltonian(x_, S_F_):
+        f = f_vec(x_, params)
+        g = g_vec(x_, S_F_)
         return l @ (f + g * F)
-    
+
     # Adjoint equations: dl/dt = -dH/dx
     dl_dt = -jax.grad(hamiltonian)(x, S_F)
-    
+
     return dl_dt
 
-def get_phi(y):
+def get_phi(y, S_F):
     """Switching function phi = dH/dF = S_F*lambda_SV + lambda_V, for y = [x, lambda].
-    Sign convention (maximisation): phi > 0 -> F_max, phi < 0 -> F_min, phi = 0 -> singular.
-    NOTE: S_F is hardcoded to 150.0 here."""
-    x, l = jnp.split(y, 2)
-    S_F = 150.0
+
+    Sign convention (maximisation): phi > 0 -> F_max, phi < 0 -> F_min,
+    phi = 0 -> singular."""
+    _, l = jnp.split(y, 2)
     return l[1] * S_F + l[3]
 
 def vector_field(t, y, args):
     """Augmented RHS [xdot, lambda_dot] for the state-costate vector y = [x, lambda]
-    (used by the shooting integrations); F is fixed in args = (S_F, F) or
-    (S_F, F, params)."""
+    (used by the shooting integrations); F is fixed in args = (S_F, F, params)."""
     x, l = jnp.split(y, 2)
     S_F, F = args[0], args[1]
 
     dx_dt = f_vec(x, params_from(args, 2)) + g_vec(x, S_F) * F
-    dl_dt = get_dldt(t,y, args)
+    dl_dt = get_dldt(t, y, args)
 
     return jnp.concatenate([dx_dt, dl_dt])
 
 # Flat convention where x and F are distinct differentiable arguments
 def states_ode(x, F, S_F, params=DEFAULT_PARAMS):
-    """State RHS with x, F, S_F as separate differentiable args (collocation/AD convention).
-
-    Bind the parameters for a sampled run with functools.partial before handing
-    this to CollocParams(f=...)."""
+    """State RHS with x, F, S_F as separate differentiable args"""
     return vf_states(0.0, x, (S_F, F, params))
 
 def costate_ode(y, S_F, F, params=DEFAULT_PARAMS):
