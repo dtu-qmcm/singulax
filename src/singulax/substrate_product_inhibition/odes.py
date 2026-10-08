@@ -34,7 +34,9 @@ def f_vec(x_val, params=DEFAULT_PARAMS):
 
     return jnp.array([
         mu(S, P, params.mu_max, params.k_p, params.k_s) * x_val[0],
-        (-sigma(S, P, params.Y_xs, params.mu_max, params.k_p, params.k_s) * x_val[0]),
+        (-sigma(S, P, params.c_mu, params.c_pi,
+                params.mu_max, params.k_p, params.k_s,
+                params.pi_max, params.k_p_pi, params.k_s_pi) * x_val[0]),
         pi(S, P, params.pi_max, params.k_p_pi, params.k_s_pi) * x_val[0],
         0.0
     ])
