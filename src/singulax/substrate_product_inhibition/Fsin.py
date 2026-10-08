@@ -26,7 +26,7 @@ def get_Fsin_unconstrained(y, args):
     """Singular feed from phi_ddot = 0:  F = - lambda^T[f,[f,g]] / lambda^T[g,[f,g]].
 
     The numerator [f,[f,g]] = (d[f,g]/dx) f - (df/dx) [f,g]. Result is clipped to [Fmin, Fmax].
-    y = [x, lambda];  args = (S_F, V_max, Fmin, Fmax) or (..., params)."""
+    y = [x, lambda];  args = (S_F, V_max, Fmin, Fmax, params)."""
     S_F, V_max, Fmin, Fmax = args[0], args[1], args[2], args[3]
     params = params_from(args, 4)
     x, l = jnp.split(y, 2)
@@ -46,7 +46,7 @@ def get_Fsin_unconstrained(y, args):
 
 def get_Fsin(y, args):
     """As get_Fsin_unconstrained, but forced to 0 once V >= V_max (tank full -> batch).
-    args = (S_F, V_max, Fmin, Fmax) or (..., params)."""
+    args = (S_F, V_max, Fmin, Fmax, params)."""
     V_max = args[1]
     F = get_Fsin_unconstrained(y, args)
     F_sin = jnp.where(y[3] >= V_max, 0.0, F)        

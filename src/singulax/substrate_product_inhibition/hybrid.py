@@ -9,12 +9,8 @@ Stage 2 (indirect): PMP multiple shooting, initialized from Stage 1, that refine
 switch times and adjoints to high accuracy; the terminal batch enters as a terminal
 condition (V = V_max at the last node) rather than as a shooting segment.
 
-This is the script body of `scripts/.../hybrid_spi.py` with the plotting removed and
-the kinetics made an argument, so the same pipeline can be run once for a figure or
-many times over a sampled parameter design:
-
-    solve_hybrid()                                  # literature parameters
-    solve_hybrid(KineticParams(*row))               # one row of a sampled design
+`params` defaults to DEFAULT_PARAMS, which is the carbon/redox-BALANCED model --
+pass REFERENCE explicitly to reproduce the published Shin & Lim results.
 
 Nothing here prints unless `verbose=True`, and nothing raises on a failed draw: a
 solve that does not converge comes back with `ok=False` and a `status` string, so a
@@ -33,7 +29,7 @@ from cyipopt import minimize_ipopt
 from singulax.collocation import (
     CollocParams, unpack, objective, constraints, jac_defects, detect_switches,
 )
-from singulax.substrate_product_inhibition.kinetics import KineticParams, DEFAULT_PARAMS
+from singulax.substrate_product_inhibition.kinetics import DEFAULT_PARAMS, REFERENCE
 from singulax.substrate_product_inhibition.odes import states_ode, vector_field
 from singulax.substrate_product_inhibition.Fsin import get_Fsin_unconstrained
 from singulax.substrate_product_inhibition.shooting import solve_and_get_residuals_ms
@@ -53,11 +49,10 @@ class ProblemConfig(NamedTuple):
     ipopt_tol: float = 1e-6
     ls_max_steps: int = 2000        # Levenberg-Marquardt steps in Stage 2
     res_tol: float = 1e-6           # ||residual|| below this counts as converged
+    defect_tol: float = 1e-4        # Stage-1 ||defects|| below this counts as converged
 
 
 DEFAULT_CONFIG = ProblemConfig()
-
-NOMINAL_STRUCTURE = (2, 0, 1, 0)    # bang(F_max) -> batch -> singular -> batch
 
 
 class Stage1Result(NamedTuple):
@@ -66,10 +61,15 @@ class Stage1Result(NamedTuple):
     U: np.ndarray                   # (N,) feed
     t_grid: np.ndarray              # (N+1,)
     t_sw: np.ndarray                # interior switch times
-    seq: tuple                      # regime sequence, 2 = F_max, 1 = singular, 0 = F_min/batch
+    seq: tuple                      # regime sequence: 2 = F_max, 1 = singular,
+                                    # 0 = F_min/batch
     lam0: np.ndarray                # lambda(0) seed from the constraint multipliers
     PV: float                       # PV(tf) from the collocation trajectory
-    ok: bool
+    defect_norm: float              # ||forward-Euler defects|| at the solution
+    ipopt_message: str              # why IPOPT stopped -- see `ok` below
+    ok: bool                        # FEASIBLE (defects small), not provably optimal:
+                                    # a draw that hit max_iter passes this test, so
+                                    # check ipopt_message before trusting its PV
 
 
 class HybridResult(NamedTuple):
@@ -106,7 +106,8 @@ def _require_x64():
 
 
 def solve_stage1(params=DEFAULT_PARAMS, cfg=DEFAULT_CONFIG, verbose=False):
-    """Collocation NLP. Returns the trajectory, the arc structure and the lambda(0) seed."""
+    """Collocation NLP. Returns the trajectory, the arc structure and the
+    lambda(0) seed."""
     _require_x64()
     nx, h, nX, nz = _sizes(cfg)
     x0 = jnp.asarray(cfg.x0)
@@ -118,7 +119,8 @@ def solve_stage1(params=DEFAULT_PARAMS, cfg=DEFAULT_CONFIG, verbose=False):
     con_jit = jax.jit(lambda z: constraints(z, p))
 
     def _sim(x, _):
-        """Forward-Euler rollout at constant feed F_init; produces the Stage-1 NLP seed z0."""
+        """Forward-Euler rollout at constant feed F_init; produces the
+        Stage-1 NLP seed z0."""
         return x + h * states_ode(x, cfg.F_init, cfg.S_F, params), x
     _, X_hist = jax.lax.scan(_sim, x0, None, length=cfg.N)
     z0 = np.concatenate([np.asarray(jnp.concatenate([x0[None, :], X_hist])).ravel(),
@@ -146,15 +148,30 @@ def solve_stage1(params=DEFAULT_PARAMS, cfg=DEFAULT_CONFIG, verbose=False):
 
     t_grid = np.linspace(0, cfg.t_end, cfg.N + 1)
     t_sw, seq = detect_switches(U_opt, t_grid[:-1], cfg.F_min, cfg.F_max)
-    ok = bool(getattr(result, "success", False)) and np.all(np.isfinite(X_opt))
+
+    # IPOPT's own flag is too strict here: on harder kinetics it reports
+    # "maximum iterations exceeded" while sitting on a perfectly good point
+    # (||defects|| ~ 1e-7). Judge the solution, not the exit code.
+    defect_norm = float(np.linalg.norm(np.asarray(con_jit(jnp.asarray(result.x)))))
+    ok = bool(np.all(np.isfinite(X_opt)) and defect_norm < cfg.defect_tol)
+
+    # That test is FEASIBILITY, not optimality, so keep IPOPT's own verdict: a
+    # point abandoned at max_iter satisfies the defects while possibly sitting
+    # short of the optimum, which biases its PV low. Without this field a
+    # sampling run cannot tell those draws apart afterwards.
+    msg = getattr(result, "message", "")
+    ipopt_message = msg.decode() if isinstance(msg, bytes) else str(msg)
 
     if verbose:
         print("l0 seed:", lam0)
         print("feed-regime switches =", np.round(t_sw, 3))
-        print("regime sequence      =", list(seq), "  (2=Fmax bang, 1=singular, 0=Fmin/batch)")
+        print("regime sequence      =", list(seq),
+              "  (2=Fmax bang, 1=singular, 0=Fmin/batch)")
+        print(f"||defects|| = {defect_norm:.2e}   IPOPT: {ipopt_message}")
 
     return Stage1Result(X=X_opt, U=U_opt, t_grid=t_grid, t_sw=t_sw, seq=tuple(seq),
-                        lam0=lam0, PV=float(X_opt[-1, 2]), ok=ok)
+                        lam0=lam0, PV=float(X_opt[-1, 2]),
+                        defect_norm=defect_norm, ipopt_message=ipopt_message, ok=ok)
 
 
 def _reconstruct(Zopt, arc_u, params, cfg):
@@ -164,28 +181,34 @@ def _reconstruct(Zopt, arc_u, params, cfg):
     n_nodes = num_segments + 1
     S_F, V_max, F_min, F_max, tf = cfg.S_F, cfg.V_max, cfg.F_min, cfg.F_max, cfg.t_end
     nodes_opt = np.asarray(Zopt[:n_nodes * 8]).reshape(n_nodes, 8)
-    sw_eff = np.maximum.accumulate(np.clip(np.asarray(Zopt[n_nodes * 8:]), 1e-2, tf - 1e-2))
+    sw_eff = np.maximum.accumulate(
+        np.clip(np.asarray(Zopt[n_nodes * 8:]), 1e-2, tf - 1e-2))
     nodes_t = np.concatenate([[0.0], sw_eff])
     sc2 = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-12)
     fsin_args = (S_F, V_max, F_min, F_max, params)
-    vf_sing = lambda t, y, a: vector_field(t, y, (S_F, get_Fsin_unconstrained(y, fsin_args), params))
+    vf_sing = lambda t, y, a: vector_field(
+        t, y, (S_F, get_Fsin_unconstrained(y, fsin_args), params))
 
     seg_t, seg_y, seg_F = [], [], []
     for i in range(num_segments):
         u = arc_u[i]
         vf = vf_sing if u is None else vector_field
         t1 = max(nodes_t[i + 1], nodes_t[i] + 1e-9)
-        s = diffrax.diffeqsolve(diffrax.ODETerm(vf), diffrax.Tsit5(), t0=nodes_t[i], t1=t1,
+        s = diffrax.diffeqsolve(
+            diffrax.ODETerm(vf), diffrax.Tsit5(), t0=nodes_t[i], t1=t1,
             y0=jnp.asarray(nodes_opt[i]), dt0=0.01, args=(S_F, u, params),
             saveat=diffrax.SaveAt(ts=jnp.linspace(nodes_t[i], t1, 60)),
             stepsize_controller=sc2, max_steps=100000, throw=False)
         yi = np.asarray(s.ys)
         seg_t.append(np.asarray(s.ts)); seg_y.append(yi)
-        seg_F.append(np.asarray(jax.vmap(lambda y: get_Fsin_unconstrained(y, fsin_args))(jnp.asarray(yi)))
-                     if u is None else np.full(len(yi), u))
+        seg_F.append(
+            np.asarray(jax.vmap(lambda y: get_Fsin_unconstrained(y, fsin_args))(
+                jnp.asarray(yi)))
+            if u is None else np.full(len(yi), u))
 
     sb = diffrax.diffeqsolve(diffrax.ODETerm(vector_field), diffrax.Tsit5(),
-        t0=nodes_t[-1], t1=tf, y0=jnp.asarray(nodes_opt[-1]), dt0=0.01, args=(S_F, 0.0, params),
+        t0=nodes_t[-1], t1=tf, y0=jnp.asarray(nodes_opt[-1]), dt0=0.01,
+        args=(S_F, 0.0, params),
         saveat=diffrax.SaveAt(ts=jnp.linspace(nodes_t[-1], tf, 100)),
         stepsize_controller=sc2, max_steps=100000, throw=False)
     tb, yb = np.asarray(sb.ts), np.asarray(sb.ys)
@@ -213,19 +236,25 @@ def solve_hybrid(params=DEFAULT_PARAMS, cfg=DEFAULT_CONFIG, verbose=False, stage
     try:
         s1 = stage1 if stage1 is not None else solve_stage1(params, cfg, verbose)
     except Exception as exc:                                     # IPOPT / trace failure
-        return HybridResult(PV=np.nan, ok=False, status=f"stage1 raised: {type(exc).__name__}",
+        return HybridResult(PV=np.nan, ok=False,
+                            status=f"stage1 raised: {type(exc).__name__}",
                             structure=(), res_norm=np.nan, stage1=None, **blank)
     if not s1.ok:
         return HybridResult(PV=np.nan, ok=False, status="stage1 did not converge",
                             structure=s1.seq, res_norm=np.nan, stage1=s1, **blank)
-    if len(s1.t_sw) < 3:
+    # The residual in shooting.py is square for ANY number of segments; what it
+    # genuinely requires is that the LAST shot arc be the singular one and that a
+    # terminal batch follow it (that batch enters as a terminal cost, not a
+    # segment). So shoot every arc except the trailing batch.
+    if len(s1.seq) < 3 or s1.seq[-1] != 0 or s1.seq[-2] != 1:
         return HybridResult(PV=np.nan, ok=False,
-                            status=f"arc structure not shootable: {s1.seq}",
+                            status=f"arc structure not shootable: {s1.seq} "
+                                   f"(need ... -> singular -> batch)",
                             structure=s1.seq, res_norm=np.nan, stage1=s1, **blank)
 
     if verbose:
         print("=== STAGE 2: multiple shooting ===")
-    arc_u = tuple(F_max if s == 2 else F_min if s == 0 else None for s in s1.seq[:3])
+    arc_u = tuple(F_max if s == 2 else F_min if s == 0 else None for s in s1.seq[:-1])
     num_segments = len(arc_u)
     n_nodes = num_segments + 1
     sw = jnp.asarray(s1.t_sw[:num_segments])
@@ -234,12 +263,14 @@ def solve_hybrid(params=DEFAULT_PARAMS, cfg=DEFAULT_CONFIG, verbose=False, stage
 
     def _integ(y0, t0, t1, u):
         """Integrate one arc [t0, t1] to build a multiple-shooting node seed."""
-        vf_singular = lambda t, y, a: vector_field(t, y, (S_F, get_Fsin_unconstrained(y, fsin_args), params))
+        vf_singular = lambda t, y, a: vector_field(
+            t, y, (S_F, get_Fsin_unconstrained(y, fsin_args), params))
         vf = vf_singular if u is None else vector_field
-        s = diffrax.diffeqsolve(diffrax.ODETerm(vf), diffrax.Tsit5(), t0=t0, t1=t1, y0=y0, dt0=0.01,
-                                args=(S_F, u, params),
-                                stepsize_controller=diffrax.PIDController(rtol=1e-6, atol=1e-6),
-                                saveat=diffrax.SaveAt(t1=True), max_steps=100000, throw=False)
+        s = diffrax.diffeqsolve(
+            diffrax.ODETerm(vf), diffrax.Tsit5(),
+            t0=t0, t1=t1, y0=y0, dt0=0.01, args=(S_F, u, params),
+            stepsize_controller=diffrax.PIDController(rtol=1e-6, atol=1e-6),
+            saveat=diffrax.SaveAt(t1=True), max_steps=100000, throw=False)
         return s.ys[-1]
 
     try:
@@ -252,31 +283,46 @@ def solve_hybrid(params=DEFAULT_PARAMS, cfg=DEFAULT_CONFIG, verbose=False, stage
 
         ms_args = (num_segments, S_F, V_max, F_min, F_max, tf, x0, arc_u, params)
         solver = optx.LevenbergMarquardt(rtol=1e-8, atol=1e-8)
-        sol = optx.least_squares(lambda u, a: solve_and_get_residuals_ms(u, a), solver, guess0,
+        sol = optx.least_squares(
+            lambda u, a: solve_and_get_residuals_ms(u, a), solver, guess0,
                                  args=ms_args, max_steps=cfg.ls_max_steps, throw=False)
         Zopt = sol.value
         res_final = solve_and_get_residuals_ms(Zopt, ms_args)
         res_norm = float(jnp.linalg.norm(res_final))
         T, Y, F, nodes_opt, sw_eff = _reconstruct(Zopt, arc_u, params, cfg)
     except Exception as exc:
-        return HybridResult(PV=np.nan, ok=False, status=f"stage2 raised: {type(exc).__name__}",
+        return HybridResult(PV=np.nan, ok=False,
+                            status=f"stage2 raised: {type(exc).__name__}",
                             structure=s1.seq, res_norm=np.nan, stage1=s1, **blank)
 
     PV = float(Y[-1, 2])
-    converged = np.isfinite(res_norm) and res_norm < cfg.res_tol and np.isfinite(PV)
-    status = "ok" if converged else f"stage2 residual {res_norm:.3e} > {cfg.res_tol:g}"
-
+    if not np.isfinite(res_norm):
+        status = "stage2 residual is not finite"
+    elif res_norm >= cfg.res_tol:
+        status = f"stage2 residual {res_norm:.3e} > {cfg.res_tol:g}"
+    elif not np.isfinite(PV):
+        status = "stage2 residual converged but the reconstruction returned nan"
+    else:
+        status = "ok"
+    converged = status == "ok"
     if verbose:
         ns8 = num_segments * 8
         print("Stage 2 ||res|| =", res_norm)
         print("Stage 2 switch times =", np.round(np.asarray(Zopt[n_nodes * 8:]), 3))
         print("  ||defects|| =", round(float(jnp.linalg.norm(res_final[:ns8])), 4),
               " ||bc_start|| =", round(float(jnp.linalg.norm(res_final[ns8:ns8 + 4])), 4),
-              " ||terminal|| =", round(float(jnp.linalg.norm(res_final[ns8 + 4:ns8 + 7])), 4),
+              " ||terminal|| =",
+              round(float(jnp.linalg.norm(res_final[ns8 + 4:ns8 + 7])), 4),
               " V-Vmax =", round(float(res_final[ns8 + 7]), 4))
         print("  phi / phidot =", np.round(np.asarray(res_final[ns8 + 8:]), 5))
-        print("Final amount of product PV(tf) =", round(PV, 2), "g   (Shin & Lim: 764.47 g)")
-        print("batch lambda(tf) =", np.round(Y[-1, 4:], 4), "  (expect [0, 0, 1, eta], eta free)")
+        # The published 764.47 g is only a benchmark for the REFERENCE
+        # coefficients; printing it next to a balanced PV invites the comparison
+        # it does not support.
+        is_ref = (params.c_mu, params.c_pi) == (REFERENCE.c_mu, REFERENCE.c_pi)
+        bench = "   (Shin & Lim: 764.47 g)" if is_ref else "   (balanced model)"
+        print("Final amount of product PV(tf) =", round(PV, 2), "g" + bench)
+        print("batch lambda(tf) =", np.round(Y[-1, 4:], 4),
+              "  (expect [0, 0, 1, eta], eta free)")
 
     return HybridResult(PV=PV, ok=bool(converged), status=status, structure=s1.seq,
                         res_norm=res_norm, switch_times=np.asarray(sw_eff), stage1=s1,
