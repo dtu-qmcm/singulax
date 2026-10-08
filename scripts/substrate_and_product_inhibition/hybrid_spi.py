@@ -14,6 +14,7 @@ Run as a script; writes spi_stage1.png and spi_stage2.png next to this file.
 import jax
 import diffrax
 import os
+from functools import partial
 import matplotlib
 matplotlib.use("Agg")                      
 import matplotlib.pyplot as plt
@@ -26,16 +27,24 @@ from singulax.substrate_product_inhibition.shooting import solve_and_get_residua
 from singulax.substrate_product_inhibition.odes import states_ode, vector_field, get_phi, vf_states
 from singulax.substrate_product_inhibition.Fsin import get_Fsin_unconstrained
 from singulax.collocation import CollocParams, unpack, objective, constraints, jac_defects, detect_switches
+from singulax.substrate_product_inhibition.kinetics import REFERENCE
 
 jax.config.update("jax_enable_x64", True)
 
 # ---- PROBLEM DATA ----
+# This script reproduces the PUBLISHED Shin & Lim result, so it pins the
+# REFERENCE coefficients (sigma = 10*mu, ethanol free). The library default is
+# the carbon/redox-balanced model, so leaving this implicit would silently
+# solve a different problem. PARAMS is threaded into every ODE call below.
+PARAMS = REFERENCE
+
 S_F, V_max, F_max, F_min, t_end = 150.0, 10.0, 2.0, 0.0, 39.5
 x0 = jnp.array([0.1, 0.001, 0.0, 1.0])            # [XV, SV, PV, V]
 
 N = 400; tf = t_end; h = tf / N; nx = 4; nX = (N + 1) * nx; nz = nX + N
 
-p = CollocParams(N=N, nx=nx, h=h, nX=nX, nz=nz, S_F=S_F, f=states_ode)
+p = CollocParams(N=N, nx=nx, h=h, nX=nX, nz=nz, S_F=S_F,
+                 f=partial(states_ode, params=PARAMS))
 obj_jit = jax.jit(lambda z: objective(z, p))
 grad_jit = jax.jit(jax.grad(lambda z: objective(z, p)))
 con_jit = jax.jit(lambda z: constraints(z, p))
@@ -46,7 +55,7 @@ if __name__ == "__main__":
     F_init = 0.5
     def _sim(x, _):
         """Forward-Euler rollout at constant feed F_init; produces the Stage-1 NLP seed z0."""
-        return x + h * states_ode(x, F_init, S_F), x
+        return x + h * states_ode(x, F_init, S_F, PARAMS), x
     _, X_hist = jax.lax.scan(_sim, x0, None, length=N)
     z0 = np.concatenate([np.asarray(jnp.concatenate([x0[None, :], X_hist])).ravel(), np.full(N, F_init)])
 
@@ -143,12 +152,12 @@ if __name__ == "__main__":
     def _integ(y0, t0, t1, u):
         """Integrate one arc [t0, t1] to build a multiple-shooting node seed.
         u is the bang feed (F_max / F_min), or None for the singular arc (F_sing feedback)."""
-        vf_singular = lambda t, y, a: vector_field(t, y, (S_F, get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max))))
+        vf_singular = lambda t, y, a: vector_field(t, y, (S_F, get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max, PARAMS)), PARAMS))
         vf = vf_singular if u is None else vector_field
         s = diffrax.diffeqsolve(diffrax.ODETerm(vf),
                                 diffrax.Tsit5(),
                                 t0=t0, t1=t1, y0=y0, dt0=0.01,
-                                args=(S_F, u),
+                                args=(S_F, u, PARAMS),
                                 stepsize_controller=diffrax.PIDController(rtol=1e-6, atol=1e-6),
                                 saveat=diffrax.SaveAt(t1=True),                                max_steps=100000,
                                 throw=False)
@@ -167,7 +176,7 @@ if __name__ == "__main__":
         node_list.append(y)
     guess0 = jnp.concatenate([jnp.stack(node_list).ravel(), sw])
 
-    ms_args = (num_segments, S_F, V_max, F_min, F_max, tf, x0, arc_u)
+    ms_args = (num_segments, S_F, V_max, F_min, F_max, tf, x0, arc_u, PARAMS)
     solver = optx.LevenbergMarquardt(rtol=1e-8, atol=1e-8)
     sol = optx.least_squares(lambda u, a: solve_and_get_residuals_ms(u, a),
                              solver,
@@ -192,7 +201,7 @@ if __name__ == "__main__":
     sw_eff = np.maximum.accumulate(np.clip(np.asarray(Zopt[n_nodes * 8:]), 1e-2, tf - 1e-2))  # matches residual
     nodes_t = np.concatenate([[0.0], sw_eff])
     sc2 = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-12)
-    vf_sing = lambda t, y, a: vector_field(t, y, (S_F, get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max))))
+    vf_sing = lambda t, y, a: vector_field(t, y, (S_F, get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max, PARAMS)), PARAMS))
     seg_t, seg_y, seg_F = [], [], []
     for i in range(num_segments):
         u = arc_u[i]
@@ -200,12 +209,12 @@ if __name__ == "__main__":
         tsi = jnp.linspace(nodes_t[i], max(nodes_t[i + 1], nodes_t[i] + 1e-9), 60)
         s = diffrax.diffeqsolve(diffrax.ODETerm(vf), diffrax.Tsit5(), t0=nodes_t[i],
             t1=max(nodes_t[i + 1], nodes_t[i] + 1e-9), y0=jnp.asarray(nodes_opt[i]), dt0=0.01,
-            args=(S_F, u), saveat=diffrax.SaveAt(ts=tsi), stepsize_controller=sc2, max_steps=100000, throw=False)
+            args=(S_F, u, PARAMS), saveat=diffrax.SaveAt(ts=tsi), stepsize_controller=sc2, max_steps=100000, throw=False)
         yi = np.asarray(s.ys); seg_t.append(np.asarray(s.ts)); seg_y.append(yi)
-        seg_F.append(np.asarray(jax.vmap(lambda y: get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max)))(jnp.asarray(yi)))
+        seg_F.append(np.asarray(jax.vmap(lambda y: get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max, PARAMS)))(jnp.asarray(yi)))
                      if u is None else np.full(len(yi), u))
     sb = diffrax.diffeqsolve(diffrax.ODETerm(vector_field), diffrax.Tsit5(),
-        t0=nodes_t[-1], t1=tf, y0=jnp.asarray(nodes_opt[-1]), dt0=0.01, args=(S_F, 0.0),
+        t0=nodes_t[-1], t1=tf, y0=jnp.asarray(nodes_opt[-1]), dt0=0.01, args=(S_F, 0.0, PARAMS),
         saveat=diffrax.SaveAt(ts=jnp.linspace(nodes_t[-1], tf, 100)), stepsize_controller=sc2, max_steps=100000, throw=False)
     tb, yb = np.asarray(sb.ts), np.asarray(sb.ys)
     print("Final amount of product PV(tf) =", round(float(yb[-1, 2]), 2), "g   (Shin & Lim: 764.47 g)")
