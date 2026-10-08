@@ -1,36 +1,48 @@
 """Specific rates -- growth (mu), substrate uptake (sigma) and product formation (pi)
--- for the substrate+product inhibition case. From Shin & Lim, "Fed-Batch Cultures",
-example 13.E.3 (ethanol from glucose by S. cerevisiae). Each is a function of the
-substrate S and product P concentrations.
-"""
-import jax
-from typing import NamedTuple
-from jaxtyping import Array, Float, ScalarLike
-import jax.numpy as jnp
+-- for the substrate+product inhibition case. The kinetic constants are Shin & Lim's,
+but the substrate demand defaults to the carbon/redox-balanced coefficients;
+pass REFERENCE to reproduce the published results."""
 
+from typing import NamedTuple
+from jaxtyping import ScalarLike
+from singulax.substrate_product_inhibition.stoichiometry import (C_MU, C_PI, REFERENCE_C_MU, REFERENCE_C_PI)
 
 class KineticParams(NamedTuple):
-    """The seven kinetic constants, in the order used by the sampling scripts.
+    """The six kinetic constants plus the two stoichiometric coefficients.
 
-    Defaults are the Shin & Lim values, so `KineticParams()` is the literature
-    model and `KineticParams(*row)` builds one from a row of a sampled design.
-    It is a NamedTuple, hence a JAX pytree: it can be passed through `jit`,
-    `vmap` and diffrax `args` without special handling.
-    """
+    The six kinetic ones are what a sampling study varies. `c_mu` and `c_pi` are
+    NOT uncertain parameters -- they select which substrate-demand model is in
+    force, and in the balanced case they come from elemental formulas (see
+    `.stoichiometry`). Both models are the same equation:
+
+        REFERENCE  sigma = 10.0000*mu + 0.0000*pi   ethanol costs no substrate
+        BALANCED   sigma =  1.2802*mu + 1.9553*pi   carbon and redox close
+
+    so the reference model is the c_pi = 0 corner of a stoichiometric family.
+
+    Defaults are the mass balanced values obtained from stoichiometry with the
+    BALANCED coefficients """
+
     mu_max: ScalarLike = 0.408      # max specific growth rate [1/h]
     k_p: ScalarLike = 16.0          # ethanol that halves growth [g/L]
     k_s: ScalarLike = 0.22          # half-saturation glucose, growth [g/L]
-    Y_xs: ScalarLike = 0.1          # biomass yield [g cell/g glucose]
     pi_max: ScalarLike = 1.0        # max specific productivity [g EtOH/(g cell h)]
     k_p_pi: ScalarLike = 71.5       # ethanol that halves productivity [g/L]
     k_s_pi: ScalarLike = 0.44       # half-saturation glucose, production [g/L]
+    c_mu: ScalarLike = C_MU   # g glucose per g biomass
+    c_pi: ScalarLike = C_PI   # g glucose per g ethanol
 
 
-DEFAULT_PARAMS = KineticParams()
+#: The published model: substrate charged for growth only (c_pi = 0).
+REFERENCE = KineticParams(c_mu=REFERENCE_C_MU, c_pi=REFERENCE_C_PI)
+#: Carbon- and redox-closed: substrate charged for both products.
+BALANCED = KineticParams()
+
+DEFAULT_PARAMS = BALANCED
 
 
 # SUBSTRATE-PRODUCT INHIBITION
-def mu(S: ScalarLike, P: ScalarLike, mu_max=0.408, K_p=16, K_s=0.22) -> ScalarLike:
+def mu(S: ScalarLike, P: ScalarLike, mu_max=BALANCED.mu_max, K_p=BALANCED.k_p, K_s=BALANCED.k_s) -> ScalarLike:
     """Growth rate function.
 
     Taken from textbook "Fed Batch Cultures" by Shin and Lim (specifically example 13.E.3 "ethanol from glucose by s. cerevisiae").
@@ -45,22 +57,30 @@ def mu(S: ScalarLike, P: ScalarLike, mu_max=0.408, K_p=16, K_s=0.22) -> ScalarLi
     return mu_max * S / ((1 + P / K_p) * (K_s + S))
 
 
-def sigma(S: ScalarLike, P: ScalarLike, Y_xs=0.1, mu_max=0.408, K_p=16, K_s=0.22) -> ScalarLike:
+def sigma(S: ScalarLike, P: ScalarLike,
+          c_mu=BALANCED.c_mu, c_pi=BALANCED.c_pi,
+          mu_max=BALANCED.mu_max, K_p=BALANCED.k_p, K_s=BALANCED.k_s,
+          pi_max=BALANCED.pi_max, K_p_pi=BALANCED.k_p_pi, K_s_pi=BALANCED.k_s_pi) -> ScalarLike:
     """Substrate consumption function.
 
-    Taken from textbook "Fed Batch Cultures" by Shin and Lim (specifically example 13.E.3 "ethanol from glucose by s. cerevisiae").
+    sigma = c_mu*mu + c_pi*pi -- the glucose bill for the two products, at
+    c_mu g glucose per g biomass and c_pi g glucose per g ethanol.
 
     Args:
         S (float): Substrate concentration.
         P (float): Product concentration.
+        c_mu (float): g glucose consumed per g biomass formed.
+        c_pi (float): g glucose consumed per g product formed.
+        mu_max, K_p, K_s (float): passed through to `mu`.
+        pi_max, K_p_pi, K_s_pi (float): passed through to `pi`.
 
     Returns:
         float: Specific substrate consumption rate.
     """
-    return mu(S, P, mu_max, K_p, K_s) / Y_xs
+    return c_mu * mu(S, P, mu_max, K_p, K_s) + c_pi * pi(S, P, pi_max, K_p_pi, K_s_pi)
 
 
-def pi(S: ScalarLike, P: ScalarLike, pi_max=1.0, K_p=71.5, K_s=0.44) -> ScalarLike:
+def pi(S: ScalarLike, P: ScalarLike, pi_max=BALANCED.pi_max, K_p_pi=BALANCED.k_p_pi, K_s_pi=BALANCED.k_s_pi) -> ScalarLike:
     """Specific productivity function.
 
     Taken from textbook "Fed Batch Cultures" by Shin and Lim (specifically example 13.E.3 "ethanol from glucose by s. cerevisiae").
@@ -72,4 +92,4 @@ def pi(S: ScalarLike, P: ScalarLike, pi_max=1.0, K_p=71.5, K_s=0.44) -> ScalarLi
     Returns:
         float: Specific productivity rate.
     """
-    return pi_max * S / ((1 + P / K_p) * (K_s + S))
+    return pi_max * S / ((1 + P / K_p_pi) * (K_s_pi + S))
