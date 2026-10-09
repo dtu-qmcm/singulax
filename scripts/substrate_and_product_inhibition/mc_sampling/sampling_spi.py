@@ -13,10 +13,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import lognorm, norm, qmc, uniform
 from singulax.substrate_product_inhibition import (
-    solve_hybrid, KineticParams, NOMINAL_STRUCTURE,
+    solve_stage1, BALANCED, stoichiometry as st,
 )
 
-CV = 0.10                                # relative sd assumed for every parameter
+#: Arc structure of the BALANCED model at the literature kinetics. Charging
+#: substrate for ethanol removes the initial full-feed bang the reference model
+#: has, so this is (0, 1, 0), not the reference's (2, 0, 1, 0).
+NOMINAL_STRUCTURE = (0, 1, 0)
+
+CV = 0.20                                # relative sd assumed for every parameter
 
 
 def _lognormal(mu_log, sigma_log):
@@ -30,17 +35,18 @@ def _lognormal_mean(mean, cv=CV):
     return _lognormal(np.log(mean) - sigma_log**2 / 2, sigma_log)
 
 
-# Priors -- means are the Shin & Lim example 13.E.3 values, sd = 10% of the mean
+# Priors -- means are the Shin & Lim example 13.E.3 values, sd = 10% of the mean.
+# Y_xs is NOT here: under the balanced model the biomass yield is an OUTPUT of
+# the carbon/redox balance, not a free parameter (see .stoichiometry).
 mu_max = _lognormal_mean(0.408)          # max specific growth rate [1/h]
 k_p = _lognormal_mean(16.0)              # ethanol that halves growth [g/L]
 k_s = _lognormal_mean(0.22)              # half-saturation glucose, growth [g/L]
-Y_xs = _lognormal_mean(0.1)              # biomass yield [g cell/g glucose]; the paper's sigma = mu/Y_xs = 10*mu
 pi_max = _lognormal_mean(1.0)            # max specific productivity [g EtOH/(g cell h)]
 k_p_pi = _lognormal_mean(71.5)           # ethanol that halves productivity [g/L]
 k_s_pi = _lognormal_mean(0.44)           # half-saturation glucose, production [g/L]
 
-NAMES = ['mu_max', 'k_p', 'k_s', 'Y_xs', 'pi_max', 'k_p_pi', 'k_s_pi']
-DISTS = [mu_max, k_p, k_s, Y_xs, pi_max, k_p_pi, k_s_pi]
+NAMES = ['mu_max', 'k_p', 'k_s', 'pi_max', 'k_p_pi', 'k_s_pi']
+DISTS = [mu_max, k_p, k_s, pi_max, k_p_pi, k_s_pi]
 M = len(DISTS)                           # number of input parameters
 
 
@@ -59,40 +65,83 @@ def sample_X(n, seed, method='lhs'):
     return np.stack([d.ppf(u[:, j]) for j, d in enumerate(DISTS)], axis=1)
 
 
-N = 50                                   # hybrid solves; each takes ~30-170 s
+N = 50                                   # Stage-1 solves; each takes ~20-90 s
 SEED = 1234
 HERE = Path(__file__).resolve().parent
-RESULTS_CSV = HERE / "sampling_spi_results.csv"
-NOMINAL_PV = 785.08                      # PV(tf) at the literature parameters
-FIGURE = HERE / "sampling_spi.png"
+# The CV is in the filenames: runs at different assumed uncertainty must not
+# overwrite each other, which is exactly what happened the first time.
+_TAG = f"balanced_cv{round(CV * 100):02d}"
+RESULTS_CSV = HERE / f"sampling_spi_{_TAG}.csv"
+FEEDS_NPZ = HERE / f"sampling_spi_{_TAG}_feeds.npz"
+FIGURE = HERE / f"sampling_spi_{_TAG}.png"
+NOMINAL_PV = 608.05                      # PV(tf) of the BALANCED model at the literature kinetics
 
-COLS = ["i", "ok", "status", "PV", "res_norm", "structure", "stage1_PV", "seconds"] + NAMES
+# Stage 1 (collocation) is the objective, not the full hybrid: the balanced model
+# has arc structure (0, 1, 0), which the three-segment shooting formulation in
+# shooting.py cannot represent. Collocation DISCOVERS the structure instead of
+# assuming it, and its PV is accurate to a few significant figures -- ample for a
+# variance decomposition, where only relative contributions matter.
+COLS = (["i", "ok", "status", "PV", "defect_norm", "structure", "seconds"] + NAMES
+        + ["Y_xs_overall", "Y_ps_overall", "carbon_accounted"])
 
 
-def run_sampling(n=N, seed=SEED, out=RESULTS_CSV, method="lhs"):
+def params_from_row(row):
+    """A sampled row -> KineticParams, keeping the BALANCED stoichiometry."""
+    return BALANCED._replace(**dict(zip(NAMES, row)))
+
+
+def _ledger(s1):
+    """Overall yields from the collocation trajectory's mass ledger.
+
+    Y_ps is the quantity the balance bounds: it can never exceed Gay-Lussac,
+    whatever the kinetics. Y_xs is an output worth watching against the
+    0.08-0.12 g/g typical of anaerobic yeast.
+    """
+    XV, SV, PV, V = s1.X[-1]
+    consumed = s1.X[0, 1] + 150.0 * (V - s1.X[0, 3]) - SV
+    if consumed <= 0:
+        return np.nan, np.nan, np.nan
+    Y_xs = (XV - s1.X[0, 0]) / consumed
+    Y_ps = (PV - s1.X[0, 2]) / consumed
+    return Y_xs, Y_ps, st.carbon_accounted(XV - s1.X[0, 0], PV, consumed)
+
+
+def run_sampling(n=N, seed=SEED, out=RESULTS_CSV, method="lhs", feeds_out=FEEDS_NPZ):
     """Solve the OCP once per sampled parameter set, appending a row per sample.
 
-    Written incrementally and flushed every row, so a crash or a Ctrl-C keeps
-    everything solved so far -- at ~1 min per solve the run is far too long to
-    risk holding the results in memory until the end.
+    The optimal FEED PROFILE of each draw is kept too and saved to `feeds_out`:
+    the scalar PV(tf) turns out to be far more robust than the policy that
+    achieves it, so the spread of feed profiles is the more informative result.
     """
     X = sample_X(n, seed, method)
+    feeds, t_ctrl = [], None
     with open(out, "w", newline="") as fh:
         w = csv.writer(fh); w.writerow(COLS); fh.flush()
         t_run = time.time()
         for i, row in enumerate(X):
             t0 = time.time()
-            r = solve_hybrid(KineticParams(*row))
+            try:
+                s1 = solve_stage1(params_from_row(row))
+                status = "ok" if s1.ok else f"defects {s1.defect_norm:.2e}"
+                pv, dn, seq = s1.PV, s1.defect_norm, s1.seq
+                yx, yp, ca = _ledger(s1)
+                feeds.append(np.asarray(s1.U)); t_ctrl = s1.t_grid[:-1]
+            except Exception as exc:
+                status = f"raised: {type(exc).__name__}"
+                s1 = None; pv = dn = yx = yp = ca = np.nan; seq = ()
+                feeds.append(np.full(len(feeds[0]) if feeds else 0, np.nan))
             dt = time.time() - t0
-            w.writerow([i, int(r.ok), r.status, r.PV, r.res_norm,
-                        "-".join(str(s) for s in r.structure),
-                        r.stage1.PV if r.stage1 is not None else np.nan,
-                        round(dt, 1)] + list(row))
-            fh.flush()                                   # survive an interrupted run
+            w.writerow([i, int(s1.ok) if s1 is not None else 0, status, pv, dn,
+                        "-".join(str(v) for v in seq), round(dt, 1)]
+                       + list(row) + [yx, yp, ca])
+            fh.flush()
             done, eta = i + 1, (time.time() - t_run) / (i + 1) * (n - i - 1)
-            print(f"[{done:3d}/{n}] PV={r.PV:8.2f}  ok={r.ok!s:5s}  {r.structure}  "
-                  f"{dt:5.1f}s  ETA {eta/60:5.1f} min   {'' if r.ok else r.status}",
+            print(f"[{done:3d}/{n}] PV={pv:8.2f}  Y_ps={yp:.4f}  {seq}  "
+                  f"{dt:5.1f}s  ETA {eta/60:5.1f} min   {'' if status=='ok' else status}",
                   flush=True)
+    if t_ctrl is not None:
+        np.savez_compressed(feeds_out, U=np.array(feeds), t_ctrl=np.asarray(t_ctrl))
+        print(f"wrote {feeds_out}")
     print(f"\nwrote {out}")
     return X
 
@@ -113,7 +162,7 @@ def _src(X, Y):
     return beta[1:], float(r2)
 
 
-def analyse(path=RESULTS_CSV, figure=FIGURE):
+def analyse(path=RESULTS_CSV, figure=FIGURE, feeds_path=FEEDS_NPZ):
     """Summary table + figure from a results CSV. Safe to re-run without re-solving."""
     with open(path, newline="") as fh:                # csv, not genfromtxt: status
         rows = list(csv.DictReader(fh))               # strings contain commas
@@ -122,12 +171,15 @@ def analyse(path=RESULTS_CSV, figure=FIGURE):
     structure = np.array([r["structure"] for r in rows])
     PV = np.array([float(r["PV"]) for r in rows])
     X_all = np.array([[float(r[n]) for n in NAMES] for r in rows])
+    Y_ps = np.array([float(r["Y_ps_overall"]) for r in rows])
+    Y_xs = np.array([float(r["Y_xs_overall"]) for r in rows])
+    C_acc = np.array([float(r["carbon_accounted"]) for r in rows])
     Y, X = PV[ok], X_all[ok]
     d = dict(ok=ok, status=status, structure=structure, PV=PV, X=X_all)
 
     print(f"\n=== {len(rows)} samples: {ok.sum()} converged, {(~ok).sum()} failed ===")
-    for st in np.unique(status[~ok]):
-        print(f"   {int((status[~ok] == st).sum()):3d} x  {st}")
+    for msg in np.unique(status[~ok]):
+        print(f"   {int((status[~ok] == msg).sum()):3d} x  {msg}")
 
     print("\narc structure (2=Fmax bang, 1=singular, 0=Fmin/batch):")
     nominal = "-".join(str(k) for k in NOMINAL_STRUCTURE)
@@ -145,6 +197,14 @@ def analyse(path=RESULTS_CSV, figure=FIGURE):
                      ("min", Y.min()), ("2.5%", np.percentile(Y, 2.5)),
                      ("median", np.median(Y)), ("97.5%", np.percentile(Y, 97.5)), ("max", Y.max())]:
         print(f"   {label:>7s} = {v:9.3f}")
+
+    print("\nbalance diagnostics (these are what the reference model could not satisfy):")
+    print(f"   ethanol yield Y_ps   {np.nanmin(Y_ps[ok]):.4f} - {np.nanmax(Y_ps[ok]):.4f} g/g"
+          f"   (Gay-Lussac {st.GAY_LUSSAC:.4f}; violations: {int((Y_ps[ok] > st.GAY_LUSSAC + 1e-9).sum())})")
+    print(f"   biomass yield Y_xs   {np.nanmin(Y_xs[ok]):.4f} - {np.nanmax(Y_xs[ok]):.4f} g/g"
+          f"   (an OUTPUT; anaerobic yeast 0.08-0.12)")
+    print(f"   carbon as X+P        {np.nanmin(C_acc[ok]):.4f} - {np.nanmax(C_acc[ok]):.4f}"
+          f"   (rest is CO2; must stay below 1)")
 
     beta, r2 = _src(X, Y)
     n, m = X.shape
@@ -167,12 +227,20 @@ def analyse(path=RESULTS_CSV, figure=FIGURE):
         print(f"   NOTE: adjusted R^2 = {r2_adj:.2f} < 0.9 -- interactions are material and SRC^2")
         print("         understates them; a variance-based (Sobol) analysis is warranted.")
 
-    _plot(X, Y, beta, r2, figure)
+    feeds = None
+    if Path(feeds_path).exists():
+        z = np.load(feeds_path)
+        feeds = (z["U"][ok], z["t_ctrl"], structure[ok])
+    else:
+        print(f"\n(no {Path(feeds_path).name} -- re-run to capture the feed profiles)")
+
+    _plot(X, Y, beta, r2, figure, feeds)
     return d, beta, r2
 
 
-def _plot(X, Y, beta, r2, figure):
-    """Three views: where PV landed, what moved it, and the shape of each dependence."""
+def _plot(X, Y, beta, r2, figure, feeds=None):
+    """Four views: where PV landed, what moved it, the shape of each dependence,
+    and -- the interesting one -- how much the optimal FEED POLICY itself moved."""
     plt.rcParams.update({
         "font.family": "serif", "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
         "mathtext.fontset": "stix", "font.size": 9, "axes.labelsize": 9, "axes.titlesize": 9,
@@ -193,7 +261,7 @@ def _plot(X, Y, beta, r2, figure):
     ax.axvline(Y.mean(), color=oi["black"], lw=1.2, label=f"mean {Y.mean():.0f} g")
     ax.axvline(NOMINAL_PV, color=oi["vermillion"], lw=1.2, ls="--", label=f"nominal {NOMINAL_PV:.0f} g")
     ax.set_xlabel(r"$PV(t_f)$ (g)"); ax.set_ylabel("count")
-    ax.set_title(f"(a) optimal product, n = {len(Y)}   CV = {Y.std(ddof=1)/Y.mean():.3f}", loc="left")
+    ax.set_title(f"(a) optimal product (balanced), n = {len(Y)}   CV = {Y.std(ddof=1)/Y.mean():.3f}", loc="left")
     ax.legend(loc="best")
 
     # (b) what moved it -- sign is real information, so colour encodes direction only
@@ -222,7 +290,34 @@ def _plot(X, Y, beta, r2, figure):
         ax.set_xlabel(NAMES[i]); ax.set_title(f"SRC {beta[i]:+.2f}", loc="left", fontsize=8)
         if k % 4 == 0:
             ax.set_ylabel(r"$PV(t_f)$ (g)")
-    fig.suptitle("Kinetic parameter sampling: substrate + product inhibition", fontsize=10)
+
+    # (d) the optimal feed policy itself. PV(tf) is nearly invariant, but the
+    # policy that achieves it is not -- draws split into arc-structure families
+    # that look quite different yet land within a few percent on product.
+    if feeds is not None:
+        U, t_ctrl, struct = feeds
+        ax = fig.add_subplot(gs[2, 2:])
+        nominal = "-".join(str(k) for k in NOMINAL_STRUCTURE)
+        top = [s for s, _ in sorted(((s, (struct == s).sum()) for s in set(struct)),
+                                    key=lambda kv: -kv[1])[:2]]
+        fam = {top[0]: oi["sky_blue"], (top[1] if len(top) > 1 else None): oi["orange"]}
+        for u, s in zip(U, struct):
+            ax.step(t_ctrl, u, where="post", lw=0.7, alpha=0.45,
+                    color=fam.get(s, "0.65"))
+        ax.step(t_ctrl, np.nanmedian(U, axis=0), where="post", lw=1.8,
+                color=oi["black"], label="median")
+        handles = [plt.Line2D([], [], color=fam[s], lw=2,
+                              label=f"({s})  n={int((struct == s).sum())}"
+                                    f"{'  nominal' if s == nominal else ''}")
+                   for s in top]
+        handles += [plt.Line2D([], [], color="0.65", lw=2,
+                               label=f"other  n={int(sum(s not in top for s in struct))}"),
+                    plt.Line2D([], [], color=oi["black"], lw=2, label="median")]
+        ax.legend(handles=handles, loc="upper right", fontsize=7)
+        ax.set_xlabel("Time (h)"); ax.set_ylabel(r"$F$ (L h$^{-1}$)")
+        ax.set_title(f"(d) optimal feed, {len(U)} draws", loc="left", fontsize=8)
+
+    fig.suptitle("Kinetic parameter sampling: carbon- and redox-balanced model", fontsize=10)
     fig.savefig(figure, dpi=600, bbox_inches="tight")
     print(f"\nsaved {figure}")
 
