@@ -23,8 +23,10 @@ import numpy as np
 import optimistix as optx
 from cycler import cycler
 from cyipopt import minimize_ipopt
-from singulax.substrate_product_inhibition.shooting import solve_and_get_residuals_ms
-from singulax.substrate_product_inhibition.odes import states_ode, vector_field, get_phi, vf_states
+from singulax.substrate_product_inhibition.shooting import (
+    solve_and_get_residuals_ms, switch_times_from,
+)
+from singulax.substrate_product_inhibition.odes import states_ode, vector_field
 from singulax.substrate_product_inhibition.Fsin import get_Fsin_unconstrained
 from singulax.collocation import CollocParams, unpack, objective, constraints, jac_defects, detect_switches
 from singulax.substrate_product_inhibition.kinetics import REFERENCE
@@ -198,7 +200,8 @@ if __name__ == "__main__":
     
     # ---- Stage 2 plot ----
     nodes_opt = np.asarray(Zopt[:n_nodes * 8]).reshape(n_nodes, 8)
-    sw_eff = np.maximum.accumulate(np.clip(np.asarray(Zopt[n_nodes * 8:]), 1e-2, tf - 1e-2))  # matches residual
+    # The same map the residual used -- not a second hand-written copy of it.
+    sw_eff = np.asarray(switch_times_from(Zopt[n_nodes * 8:], tf))
     nodes_t = np.concatenate([[0.0], sw_eff])
     sc2 = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-12)
     vf_sing = lambda t, y, a: vector_field(t, y, (S_F, get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max, PARAMS)), PARAMS))
