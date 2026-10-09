@@ -32,7 +32,9 @@ from singulax.collocation import (
 from singulax.substrate_product_inhibition.kinetics import DEFAULT_PARAMS, REFERENCE
 from singulax.substrate_product_inhibition.odes import states_ode, vector_field
 from singulax.substrate_product_inhibition.Fsin import get_Fsin_unconstrained
-from singulax.substrate_product_inhibition.shooting import solve_and_get_residuals_ms
+from singulax.substrate_product_inhibition.shooting import (
+    solve_and_get_residuals_ms, switch_times_from,
+)
 
 
 class ProblemConfig(NamedTuple):
@@ -181,8 +183,8 @@ def _reconstruct(Zopt, arc_u, params, cfg):
     n_nodes = num_segments + 1
     S_F, V_max, F_min, F_max, tf = cfg.S_F, cfg.V_max, cfg.F_min, cfg.F_max, cfg.t_end
     nodes_opt = np.asarray(Zopt[:n_nodes * 8]).reshape(n_nodes, 8)
-    sw_eff = np.maximum.accumulate(
-        np.clip(np.asarray(Zopt[n_nodes * 8:]), 1e-2, tf - 1e-2))
+    # The same map the residual used -- not a second hand-written copy of it.
+    sw_eff = np.asarray(switch_times_from(Zopt[n_nodes * 8:], tf))
     nodes_t = np.concatenate([[0.0], sw_eff])
     sc2 = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-12)
     fsin_args = (S_F, V_max, F_min, F_max, params)
