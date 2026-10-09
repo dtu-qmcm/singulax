@@ -11,7 +11,7 @@ from singulax.substrate_product_inhibition.Fsin import lie_bracket_fg, inner_bra
 from singulax.substrate_product_inhibition.shooting import solve_and_get_residuals_ms
 from singulax.substrate_product_inhibition.hybrid import (
     solve_hybrid, solve_stage1, ProblemConfig, HybridResult, Stage1Result,
-    DEFAULT_CONFIG, NOMINAL_STRUCTURE,
+    DEFAULT_CONFIG,
 )
 
 __all__ = [
@@ -22,5 +22,5 @@ __all__ = [
     "lie_bracket_fg", "inner_bracket", "get_Fsin", "get_Fsin_unconstrained",
     "solve_and_get_residuals_ms",
     "solve_hybrid", "solve_stage1", "ProblemConfig", "HybridResult",
-    "Stage1Result", "DEFAULT_CONFIG", "NOMINAL_STRUCTURE",
+    "Stage1Result", "DEFAULT_CONFIG",
 ]
