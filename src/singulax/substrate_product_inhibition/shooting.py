@@ -5,6 +5,22 @@ from singulax.substrate_product_inhibition.odes import vector_field, get_phi, vf
 from singulax.substrate_product_inhibition.Fsin import get_Fsin_unconstrained
 
 
+def switch_times_from(raw, tf):
+    """The ONE definition of how the shooting unknowns become ordered switch times.
+
+    Levenberg-Marquardt is unconstrained, so it proposes negative, unordered and
+    out-of-horizon times; this maps whatever it proposes onto
+    0 < t1 <= ... <= t_M <= tf.
+
+    The t_M <= tf ceiling is load-bearing, not cosmetic: the gaps accumulate past
+    the first clip's bound (raw [30, 20, 35] -> cumsum [30, 30, 45]), and a t_M
+    beyond tf makes the batch integrate backwards, which diffrax rejects outright.
+    """
+    raw = jnp.clip(jnp.asarray(raw), 1e-2, tf - 1e-2)
+    gaps = jnp.maximum(jnp.diff(jnp.concatenate([jnp.array([0.0]), raw])), 0.0)
+    return jnp.clip(jnp.cumsum(gaps), 1e-2, tf)
+
+
 def solve_and_get_residuals_ms(guess, args):
     """Multiple-shooting residuals.
 
@@ -29,12 +45,7 @@ def solve_and_get_residuals_ms(guess, args):
     params = params_from(args, 8)
     n_nodes = num_segments + 1
     nodes = guess[:n_nodes * 8].reshape(n_nodes, 8)
-    # Levenberg-Marquardt is unconstrained, so it will propose negative, unordered
-    # or out-of-horizon switch times. These three lines map whatever it proposes
-    # onto 0 < t1 <= ... <= t_M <= tf.
-    raw = jnp.clip(guess[n_nodes * 8:], 1e-2, tf - 1e-2)                  # [t1, ..., t_M]
-    gaps = jnp.maximum(jnp.diff(jnp.concatenate([jnp.array([0.0]), raw])), 0.0)   # ordering only (>=0); no min-length floor
-    switch_times = jnp.clip(jnp.cumsum(gaps), 1e-2, tf)                   # ordered, 0 < t1 <= ... <= t_M <= tf
+    switch_times = switch_times_from(guess[n_nodes * 8:], tf)            # [t1, ..., t_M]
     shooting_nodes = jnp.concatenate([jnp.array([0.0]), switch_times])   # [0, t1, ..., t_M]
 
     sc = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-12)
