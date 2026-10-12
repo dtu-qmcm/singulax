@@ -21,16 +21,40 @@ def test_macro_reactions_close():
     assert y_eth * st.ETHANOL.gamma == pytest.approx(st.GLUCOSE.gamma)
     assert y_eth * st.ETHANOL.C + (1 - y_eth) * st.CO2.C == pytest.approx(1.0)
 
-    # R2 anabolic:  CH2O + a NH3 -> Yx CH1.8O0.5N0.2 + Yc CO2 + Yw H2O
-    # (NH3 and CO2 both carry zero available electrons)
-    y_bio = st.r2_yield()
-    assert y_bio * st.BIOMASS.gamma == pytest.approx(st.GLUCOSE.gamma)
-    assert y_bio <= 1.0          # the rest of the carbon leaves as CO2
+    # R2 anabolic:  2 CH2O + 0.2 NH3 -> CH1.8O0.6N0.2 + (12/14) CH8/3O
+    #                                   + (2/14) CO2 + 0.2571 H2O
+    # NH3, CO2 and H2O all carry zero available electrons, so the electron
+    # balance is between glucose, biomass and GLYCEROL -- leave glycerol out and
+    # it does not close, because BIOMASS has the same gamma as GLUCOSE.
+    Yx, Yg, Yc = st.r2_yields()
+    assert Yx * st.BIOMASS.gamma + Yg * st.GLYCEROL.gamma == pytest.approx(
+        st.GLUCOSE.gamma)
+    assert Yx + Yg + Yc == pytest.approx(1.0)        # carbon
+    assert Yc > 0.0              # growth must release SOME CO2
+
+
+def test_schulze_r2_reproduced():
+    """r2_yields is Schulze's R2 divided through by 2, to 1e-12."""
+    Yx, Yg, Yc = st.r2_yields()
+    assert (Yx, Yg, Yc) == pytest.approx((0.5, 6 / 14, 1 / 14))
+
+
+def test_glycerol_is_what_makes_R2_release_co2():
+    """Not a refinement: without it the anabolic reaction produces no CO2.
+
+    BIOMASS and GLUCOSE both have gamma = 4, so at k = 0 the electron balance
+    gives Yx = 1 and every carbon atom ends up in cells. Glycerol is the carbon
+    sink, and the model needs a lot of it (Yg/Yx = 6/7).
+    """
+    Yx0, Yg0, Yc0 = st.r2_yields(k=0.0)
+    assert st.BIOMASS.gamma == pytest.approx(st.GLUCOSE.gamma)
+    assert (Yx0, Yg0, Yc0) == pytest.approx((1.0, 0.0, 0.0))
+    assert st.r2_yields()[2] > 0.0
 
 
 def test_coefficient_values():
     """Pin the derived numbers so a formula change is noticed."""
-    assert st.C_MU == pytest.approx(1.2802, abs=1e-4)
+    assert st.C_MU == pytest.approx(2.2898, abs=1e-4)
     assert st.C_PI == pytest.approx(1.9553, abs=1e-4)
     assert st.GAY_LUSSAC == pytest.approx(0.5114, abs=1e-4)
 
@@ -39,8 +63,8 @@ def test_corners_detect_a_swapped_pair():
     """c_mu multiplies mu and c_pi multiplies pi -- not the other way round.
 
     Pure ethanol must account for exactly r1_yield of the carbon (the other
-    third leaves as CO2); pure growth for exactly r2_yield. Swapping the pair
-    gives 1.018 and 0.624 instead.
+    third leaves as CO2); pure growth for exactly r2_yield -- the rest of that
+    carbon going to glycerol and CO2, neither of which is a tracked state.
     """
     pure_ethanol = st.carbon_accounted(0.0, 1.0, st.C_PI)
     pure_growth = st.carbon_accounted(1.0, 0.0, st.C_MU)
