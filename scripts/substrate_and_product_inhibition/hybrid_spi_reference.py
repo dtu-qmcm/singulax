@@ -251,6 +251,11 @@ if __name__ == "__main__":
 
     axd["phi"].plot(T, phi_all, color=oi["reddish_purple"])
     axd["phi"].axhline(0,color=oi["black"],ls="--", lw=0.9)
+    arcs = T <= sw_eff[-1]
+    lim = 1.15 * np.nanmax(np.abs(phi_all[arcs]))
+    axd["phi"].set_ylim(-lim, lim)
+    for tsw in sw_eff:
+        axd["phi"].axvline(tsw, color="0.6", ls=":", lw=0.8)
     axd["phi"].set_ylabel("$\\phi$")
     axd["phi"].set_xlabel("Time (h)")
     
