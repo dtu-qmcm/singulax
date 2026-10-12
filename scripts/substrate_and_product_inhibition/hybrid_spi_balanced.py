@@ -1,16 +1,3 @@
-"""Two-stage hybrid solve of the substrate + product inhibition fed-batch problem
-(Shin & Lim ethanol case study).
-
-Stage 1 (direct): a forward-Euler collocation NLP (IPOPT) that gives an approximate
-trajectory -- enough to read off the bang/singular/batch structure and to seed the
-initial costate lambda(0) from the constraint multipliers.
-
-Stage 2 (indirect): PMP multiple shooting, initialized from Stage 1, that refines the
-switch times and adjoints to high accuracy; the terminal batch enters as a terminal
-condition (V = V_max at the last node) rather than as a shooting segment.
-
-Run as a script; writes spi_stage1.png and spi_stage2.png next to this file.
-"""
 import jax
 import diffrax
 import os
@@ -29,16 +16,12 @@ from singulax.substrate_product_inhibition.shooting import (
 from singulax.substrate_product_inhibition.odes import states_ode, vector_field
 from singulax.substrate_product_inhibition.Fsin import get_Fsin_unconstrained
 from singulax.collocation import CollocParams, unpack, objective, constraints, jac_defects, detect_switches
-from singulax.substrate_product_inhibition.kinetics import REFERENCE
+from singulax.substrate_product_inhibition.kinetics import BALANCED
 
 jax.config.update("jax_enable_x64", True)
 
 # ---- PROBLEM DATA ----
-# This script reproduces the PUBLISHED Shin & Lim result, so it pins the
-# REFERENCE coefficients (sigma = 10*mu, ethanol free). The library default is
-# the carbon/redox-balanced model, so leaving this implicit would silently
-# solve a different problem. PARAMS is threaded into every ODE call below.
-PARAMS = REFERENCE
+PARAMS = BALANCED
 
 S_F, V_max, F_max, F_min, t_end = 150.0, 10.0, 2.0, 0.0, 39.5
 x0 = jnp.array([0.1, 0.001, 0.0, 1.0])            # [XV, SV, PV, V]
@@ -54,7 +37,7 @@ con_jit = jax.jit(lambda z: constraints(z, p))
 if __name__ == "__main__":
     # ===== STAGE 1: collocation =====
     print("=== STAGE 1: collocation (maximise PV) ===")
-    F_init = 0.5
+    F_init = 0.7
     def _sim(x, _):
         """Forward-Euler rollout at constant feed F_init; produces the Stage-1 NLP seed z0."""
         return x + h * states_ode(x, F_init, S_F, PARAMS), x
@@ -146,8 +129,8 @@ if __name__ == "__main__":
     ax[2].set_xlabel("Time (h)")
     ax[2].set_ylim(F_min - 0.1, F_max + 0.1)
 
-    fig.savefig(os.path.join(here, "spi_stage1.png"), dpi=600, bbox_inches="tight")
-    print("saved spi_stage1.png")
+    fig.savefig(os.path.join(here, "spi_stage1_balanced.png"), dpi=600, bbox_inches="tight")
+    print("saved spi_stage1_balanced.png")
 
     # ===== STAGE 2: shooting =====
     print("=== STAGE 2: multiple shooting ===")
@@ -161,7 +144,8 @@ if __name__ == "__main__":
                                 t0=t0, t1=t1, y0=y0, dt0=0.01,
                                 args=(S_F, u, PARAMS),
                                 stepsize_controller=diffrax.PIDController(rtol=1e-6, atol=1e-6),
-                                saveat=diffrax.SaveAt(t1=True),                                max_steps=100000,
+                                saveat=diffrax.SaveAt(t1=True),
+                                max_steps=100000,
                                 throw=False)
         return s.ys[-1]
 
@@ -220,7 +204,7 @@ if __name__ == "__main__":
         t0=nodes_t[-1], t1=tf, y0=jnp.asarray(nodes_opt[-1]), dt0=0.01, args=(S_F, 0.0, PARAMS),
         saveat=diffrax.SaveAt(ts=jnp.linspace(nodes_t[-1], tf, 100)), stepsize_controller=sc2, max_steps=100000, throw=False)
     tb, yb = np.asarray(sb.ts), np.asarray(sb.ys)
-    print("Final amount of product PV(tf) =", round(float(yb[-1, 2]), 2), "g   (Shin & Lim: 764.47 g)")
+    print("Final amount of product PV(tf) =", round(float(yb[-1, 2]), 2), "g")
     print("batch lambda(tf) =", np.round(yb[-1, 4:], 4), "  (expect [0, 0, 1, eta], eta free)")
 
     # single continuous trajectory: bang / bang / singular segments + batch
@@ -272,6 +256,6 @@ if __name__ == "__main__":
     for a in axd.values():
         for tsw in sw_eff:
             a.axvline(tsw,color="0.5",ls=":",lw=0.8)
-    fig.savefig(os.path.join(here, "spi_stage2.png"), dpi=600, bbox_inches="tight")
-    print("saved spi_stage2.png")
+    fig.savefig(os.path.join(here, "spi_stage2_balanced.png"), dpi=600, bbox_inches="tight")
+    print("saved spi_stage2_balanced.png")
 
