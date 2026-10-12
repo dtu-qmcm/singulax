@@ -247,12 +247,14 @@ if __name__ == "__main__":
     axd["state"].plot(T, Yf[:, 2] / 5, label=r"$PV / 5$", color=oi["bluish_green"])
     axd["state"].plot(T, Yf[:, 3], label=r"$V$", color=oi["vermillion"])
     axd["state"].set_ylabel("Mass (g), Volume (L)")
-    axd["state"].legend(ncol=4, loc="best")
+    axd["state"].legend(ncol=4, loc="lower center", bbox_to_anchor=(0.5, 1.01),
+                        frameon=False, borderaxespad=0.0)
 
     axd["SP"].plot(T, S_all, label="S", color=oi["orange"], ls="--", lw=1.8)
     axd["SP"].plot(T, P_all, label="P", color=oi["bluish_green"], ls="--", lw=1.8)
     axd["SP"].set_ylabel(r"Concentration (g L$^{-1}$)")
-    axd["SP"].legend(ncol=2, loc="best")
+    axd["SP"].legend(ncol=2, loc="lower center", bbox_to_anchor=(0.5, 1.01),
+                     frameon=False, borderaxespad=0.0)
 
     axd["phi"].plot(T, phi_all, color=oi["reddish_purple"])
     axd["phi"].axhline(0,color=oi["black"],ls="--", lw=0.9)
@@ -281,7 +283,9 @@ if __name__ == "__main__":
     axd["adj"].set_ylabel(r"$\lambda_1,\ \lambda_2,\ \lambda_3$")
     h1, l1 = axd["adj"].get_legend_handles_labels()
     h2, l2 = ax4.get_legend_handles_labels()
-    axd["adj"].legend(h1 + h2, l1 + l2, ncol=4, frameon=False, loc="upper right")
+    axd["adj"].legend(h1 + h2, l1 + l2, ncol=4, frameon=False,
+                      loc="lower center", bbox_to_anchor=(0.5, 1.01),
+                      borderaxespad=0.0)
 
     # dashed vertical lines at the switching times, in every subplot
     for a in axd.values():
