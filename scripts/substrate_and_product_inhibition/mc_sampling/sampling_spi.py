@@ -16,9 +16,6 @@ from singulax.substrate_product_inhibition import (
     solve_stage1, BALANCED, stoichiometry as st,
 )
 
-#: Arc structure of the BALANCED model at the literature kinetics. Charging
-#: substrate for ethanol removes the initial full-feed bang the reference model
-#: has, so this is (0, 1, 0), not the reference's (2, 0, 1, 0).
 NOMINAL_STRUCTURE = (0, 1, 0)
 
 CV = 0.20                                # relative sd assumed for every parameter
@@ -72,15 +69,9 @@ HERE = Path(__file__).resolve().parent
 # overwrite each other, which is exactly what happened the first time.
 _TAG = f"balanced_cv{round(CV * 100):02d}"
 RESULTS_CSV = HERE / f"sampling_spi_{_TAG}.csv"
-FEEDS_NPZ = HERE / f"sampling_spi_{_TAG}_feeds.npz"
 FIGURE = HERE / f"sampling_spi_{_TAG}.png"
 NOMINAL_PV = 608.05                      # PV(tf) of the BALANCED model at the literature kinetics
 
-# Stage 1 (collocation) is the objective, not the full hybrid: the balanced model
-# has arc structure (0, 1, 0), which the three-segment shooting formulation in
-# shooting.py cannot represent. Collocation DISCOVERS the structure instead of
-# assuming it, and its PV is accurate to a few significant figures -- ample for a
-# variance decomposition, where only relative contributions matter.
 COLS = (["i", "ok", "status", "PV", "defect_norm", "structure", "seconds"] + NAMES
         + ["Y_xs_overall", "Y_ps_overall", "carbon_accounted"])
 
@@ -106,15 +97,9 @@ def _ledger(s1):
     return Y_xs, Y_ps, st.carbon_accounted(XV - s1.X[0, 0], PV, consumed)
 
 
-def run_sampling(n=N, seed=SEED, out=RESULTS_CSV, method="lhs", feeds_out=FEEDS_NPZ):
-    """Solve the OCP once per sampled parameter set, appending a row per sample.
-
-    The optimal FEED PROFILE of each draw is kept too and saved to `feeds_out`:
-    the scalar PV(tf) turns out to be far more robust than the policy that
-    achieves it, so the spread of feed profiles is the more informative result.
-    """
+def run_sampling(n=N, seed=SEED, out=RESULTS_CSV, method="lhs"):
+    """Solve Stage 1 once per sampled parameter set, appending a row per sample."""
     X = sample_X(n, seed, method)
-    feeds, t_ctrl = [], None
     with open(out, "w", newline="") as fh:
         w = csv.writer(fh); w.writerow(COLS); fh.flush()
         t_run = time.time()
@@ -125,11 +110,9 @@ def run_sampling(n=N, seed=SEED, out=RESULTS_CSV, method="lhs", feeds_out=FEEDS_
                 status = "ok" if s1.ok else f"defects {s1.defect_norm:.2e}"
                 pv, dn, seq = s1.PV, s1.defect_norm, s1.seq
                 yx, yp, ca = _ledger(s1)
-                feeds.append(np.asarray(s1.U)); t_ctrl = s1.t_grid[:-1]
             except Exception as exc:
                 status = f"raised: {type(exc).__name__}"
                 s1 = None; pv = dn = yx = yp = ca = np.nan; seq = ()
-                feeds.append(np.full(len(feeds[0]) if feeds else 0, np.nan))
             dt = time.time() - t0
             w.writerow([i, int(s1.ok) if s1 is not None else 0, status, pv, dn,
                         "-".join(str(v) for v in seq), round(dt, 1)]
@@ -139,9 +122,6 @@ def run_sampling(n=N, seed=SEED, out=RESULTS_CSV, method="lhs", feeds_out=FEEDS_
             print(f"[{done:3d}/{n}] PV={pv:8.2f}  Y_ps={yp:.4f}  {seq}  "
                   f"{dt:5.1f}s  ETA {eta/60:5.1f} min   {'' if status=='ok' else status}",
                   flush=True)
-    if t_ctrl is not None:
-        np.savez_compressed(feeds_out, U=np.array(feeds), t_ctrl=np.asarray(t_ctrl))
-        print(f"wrote {feeds_out}")
     print(f"\nwrote {out}")
     return X
 
@@ -162,7 +142,7 @@ def _src(X, Y):
     return beta[1:], float(r2)
 
 
-def analyse(path=RESULTS_CSV, figure=FIGURE, feeds_path=FEEDS_NPZ):
+def analyse(path=RESULTS_CSV, figure=FIGURE):
     """Summary table + figure from a results CSV. Safe to re-run without re-solving."""
     with open(path, newline="") as fh:                # csv, not genfromtxt: status
         rows = list(csv.DictReader(fh))               # strings contain commas
@@ -182,10 +162,13 @@ def analyse(path=RESULTS_CSV, figure=FIGURE, feeds_path=FEEDS_NPZ):
         print(f"   {int((status[~ok] == msg).sum()):3d} x  {msg}")
 
     print("\narc structure (2=Fmax bang, 1=singular, 0=Fmin/batch):")
+    counts = {s: int((structure == s).sum()) for s in np.unique(structure)}
+    modal = max(counts, key=counts.get)
     nominal = "-".join(str(k) for k in NOMINAL_STRUCTURE)
-    for s in np.unique(structure):
-        flag = "  <- nominal" if s == nominal else ""
-        print(f"   {int((structure == s).sum()):3d} x  ({s}){flag}")
+    for s, c in sorted(counts.items(), key=lambda kv: -kv[1]):
+        flag = "  <- most common" if s == modal else ""
+        flag += "  (literature kinetics)" if s == nominal else ""
+        print(f"   {c:3d} x  ({s}){flag}")
 
     if ok.sum() < 3:
         print("\nfewer than 3 converged draws -- nothing to summarise. "
@@ -227,20 +210,14 @@ def analyse(path=RESULTS_CSV, figure=FIGURE, feeds_path=FEEDS_NPZ):
         print(f"   NOTE: adjusted R^2 = {r2_adj:.2f} < 0.9 -- interactions are material and SRC^2")
         print("         understates them; a variance-based (Sobol) analysis is warranted.")
 
-    feeds = None
-    if Path(feeds_path).exists():
-        z = np.load(feeds_path)
-        feeds = (z["U"][ok], z["t_ctrl"], structure[ok])
-    else:
-        print(f"\n(no {Path(feeds_path).name} -- re-run to capture the feed profiles)")
-
-    _plot(X, Y, beta, r2, figure, feeds)
+    _plot(X, Y, beta, r2, figure)
     return d, beta, r2
 
 
-def _plot(X, Y, beta, r2, figure, feeds=None):
-    """Four views: where PV landed, what moved it, the shape of each dependence,
-    and -- the interesting one -- how much the optimal FEED POLICY itself moved."""
+def _plot(X, Y, beta, r2, figure):
+    """Three views: where PV landed, what moved it, and the shape of each
+    dependence. The feed-profile ensemble is a separate study -- see
+    feed_ensemble.py, which uses the hybrid rather than Stage 1."""
     plt.rcParams.update({
         "font.family": "serif", "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
         "mathtext.fontset": "stix", "font.size": 9, "axes.labelsize": 9, "axes.titlesize": 9,
@@ -252,11 +229,14 @@ def _plot(X, Y, beta, r2, figure, feeds=None):
     oi = {"orange": "#E69F00", "sky_blue": "#56B4E9", "bluish_green": "#009E73",
           "vermillion": "#D55E00", "black": "#000000", "reddish_purple": "#CC79A7"}
 
-    fig = plt.figure(figsize=(9, 9), constrained_layout=True)
-    gs = fig.add_gridspec(3, 4)
+    # One column per parameter, so panel (c) fits on a single row whatever the
+    # number of parameters. (a) and (b) split the top row between them.
+    m = X.shape[1]
+    fig = plt.figure(figsize=(2.0 * m, 6.0), constrained_layout=True)
+    gs = fig.add_gridspec(2, m)
 
     # (a) where PV landed
-    ax = fig.add_subplot(gs[0, :2])
+    ax = fig.add_subplot(gs[0, :m // 2])
     ax.hist(Y, bins=max(8, int(np.sqrt(len(Y)))), color=oi["sky_blue"], edgecolor="white", linewidth=0.6)
     ax.axvline(Y.mean(), color=oi["black"], lw=1.2, label=f"mean {Y.mean():.0f} g")
     ax.axvline(NOMINAL_PV, color=oi["vermillion"], lw=1.2, ls="--", label=f"nominal {NOMINAL_PV:.0f} g")
@@ -265,7 +245,7 @@ def _plot(X, Y, beta, r2, figure, feeds=None):
     ax.legend(loc="best")
 
     # (b) what moved it -- sign is real information, so colour encodes direction only
-    ax = fig.add_subplot(gs[0, 2:])
+    ax = fig.add_subplot(gs[0, m // 2:])
     order = np.argsort(beta ** 2)
     cols = [oi["bluish_green"] if beta[i] > 0 else oi["vermillion"] for i in order]
     ax.barh(range(len(order)), (beta ** 2)[order], color=cols, height=0.65)
@@ -282,40 +262,14 @@ def _plot(X, Y, beta, r2, figure, feeds=None):
     # (c) the shape of each dependence
     rank = np.argsort(-beta ** 2)
     for k, i in enumerate(rank):
-        ax = fig.add_subplot(gs[1 + k // 4, k % 4])
+        ax = fig.add_subplot(gs[1, k])
         ax.plot(X[:, i], Y, "o", ms=3.5, color=oi["sky_blue"], mew=0)
         c = np.polyfit(X[:, i], Y, 1)
         xs = np.linspace(X[:, i].min(), X[:, i].max(), 20)
         ax.plot(xs, np.polyval(c, xs), color=oi["black"], lw=1.0)
         ax.set_xlabel(NAMES[i]); ax.set_title(f"SRC {beta[i]:+.2f}", loc="left", fontsize=8)
-        if k % 4 == 0:
+        if k == 0:
             ax.set_ylabel(r"$PV(t_f)$ (g)")
-
-    # (d) the optimal feed policy itself. PV(tf) is nearly invariant, but the
-    # policy that achieves it is not -- draws split into arc-structure families
-    # that look quite different yet land within a few percent on product.
-    if feeds is not None:
-        U, t_ctrl, struct = feeds
-        ax = fig.add_subplot(gs[2, 2:])
-        nominal = "-".join(str(k) for k in NOMINAL_STRUCTURE)
-        top = [s for s, _ in sorted(((s, (struct == s).sum()) for s in set(struct)),
-                                    key=lambda kv: -kv[1])[:2]]
-        fam = {top[0]: oi["sky_blue"], (top[1] if len(top) > 1 else None): oi["orange"]}
-        for u, s in zip(U, struct):
-            ax.step(t_ctrl, u, where="post", lw=0.7, alpha=0.45,
-                    color=fam.get(s, "0.65"))
-        ax.step(t_ctrl, np.nanmedian(U, axis=0), where="post", lw=1.8,
-                color=oi["black"], label="median")
-        handles = [plt.Line2D([], [], color=fam[s], lw=2,
-                              label=f"({s})  n={int((struct == s).sum())}"
-                                    f"{'  nominal' if s == nominal else ''}")
-                   for s in top]
-        handles += [plt.Line2D([], [], color="0.65", lw=2,
-                               label=f"other  n={int(sum(s not in top for s in struct))}"),
-                    plt.Line2D([], [], color=oi["black"], lw=2, label="median")]
-        ax.legend(handles=handles, loc="upper right", fontsize=7)
-        ax.set_xlabel("Time (h)"); ax.set_ylabel(r"$F$ (L h$^{-1}$)")
-        ax.set_title(f"(d) optimal feed, {len(U)} draws", loc="left", fontsize=8)
 
     fig.suptitle("Kinetic parameter sampling: carbon- and redox-balanced model", fontsize=10)
     fig.savefig(figure, dpi=600, bbox_inches="tight")
