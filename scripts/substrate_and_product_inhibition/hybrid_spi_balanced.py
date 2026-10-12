@@ -272,11 +272,16 @@ if __name__ == "__main__":
     axd["adj"].plot(T, Yf[:, 4], label=r"$\lambda_1$ ($XV$)", color=oi["sky_blue"], ls="-")
     axd["adj"].plot(T, Yf[:, 5], label=r"$\lambda_2$ ($SV$)", color=oi["orange"], ls="--")
     axd["adj"].plot(T, Yf[:, 6], label=r"$\lambda_3$ ($PV$)", color=oi["bluish_green"], ls="-.")
-    axd["adj"].plot(T, Yf[:, 7], label=r"$\lambda_4$ ($V$)", color=oi["vermillion"], ls=":")
+    ax4 = axd["adj"].twinx()
+    ax4.plot(T, Yf[:, 7], label=r"$\lambda_4$ ($V$)", color="black", ls=":")
+    ax4.set_ylabel(r"$\lambda_4$ ($V$)")
+    ax4.grid(False)
 
     axd["adj"].set_xlabel("Time (h)")
-    axd["adj"].set_ylabel(r"$\lambda$")
-    axd["adj"].legend(ncol=4, frameon=False, loc="upper right")
+    axd["adj"].set_ylabel(r"$\lambda_1,\ \lambda_2,\ \lambda_3$")
+    h1, l1 = axd["adj"].get_legend_handles_labels()
+    h2, l2 = ax4.get_legend_handles_labels()
+    axd["adj"].legend(h1 + h2, l1 + l2, ncol=4, frameon=False, loc="upper right")
 
     # dashed vertical lines at the switching times, in every subplot
     for a in axd.values():
