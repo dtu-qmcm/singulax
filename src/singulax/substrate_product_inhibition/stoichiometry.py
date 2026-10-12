@@ -1,5 +1,5 @@
 """
-Elemental and redox stoichiometry for glucose -> ethanol + biomass.
+Elemental and redox stoichiometry for glucose -> ethanol + biomass + glycerol.
 
 The two coefficients in the substrate demand
 
@@ -7,12 +7,12 @@ The two coefficients in the substrate demand
 
 are derived here from elemental formulas.
 
-Method: write the two macro-reactions on a C-mol basis,
+Method: write the two macro-reactions on a C-mol basis and close them with carbon
+plus the degree of reduction. After Schulze (1995, PhD thesis, DTU):
 
-    R1 catabolic:  CH2O -> (2/3) CH3O0.5 + (1/3) CO2
-    R2 anabolic :  CH2O + a NH3 -> Yx CH1.8O0.5N0.2 + Yc CO2 + Yw H2O
-
-and close them with carbon plus the degree of reduction.
+    R1 catabolic:  1.5 CH2O -> CH3O0.5 + 0.5 CO2
+    R2 anabolic :  2 CH2O + 0.2 NH3 -> CH1.8O0.6N0.2 + (12/14) CH8/3O
+                                       + (2/14) CO2 + 0.2571 H2O
 """
 from typing import NamedTuple
 
@@ -40,11 +40,14 @@ class Species(NamedTuple):
 
 
 GLUCOSE  = Species("glucose",  1, 2.000, 1.0,  0.0)     # CH2O
-BIOMASS  = Species("biomass",  1, 1.800, 0.5,  0.2)     # CH1.8O0.5N0.2, Roels average
+BIOMASS  = Species("biomass",  1, 1.800, 0.6,  0.2)     # CH1.8O0.6N0.2
 ETHANOL  = Species("ethanol",  1, 3.000, 0.5,  0.0)     # CH3O0.5
 CO2      = Species("CO2",      1, 0.000, 2.0,  0.0)
 WATER    = Species("water",    0, 2.000, 1.0,  0.0)
+GLYCEROL = Species("glycerol", 1, 8 / 3, 1.0,  0.0)     # CH8/3O
 AMMONIA  = Species("ammonia",  0, 3.000, 0.0,  1.0)
+
+GLYCEROL_K = 6.0 / 7.0
 
 def glucose_per_gram(product: Species,
                      yield_cmol: float,
@@ -57,16 +60,23 @@ def r1_yield() -> float:
     return GLUCOSE.gamma / ETHANOL.gamma                      # 4/6 = 0.6667
 
 
-def r2_yield() -> float:
+def r2_yield(k: float = GLYCEROL_K) -> float:
     """C-mol biomass per C-mol glucose in the anabolic reaction."""
-    return GLUCOSE.gamma / BIOMASS.gamma
+    return GLUCOSE.gamma / (BIOMASS.gamma + k * GLYCEROL.gamma)
 
 
-def coefficients() -> tuple:
+def r2_yields(k: float = GLYCEROL_K) -> tuple:
+    """(Yx, Yg, Yc) per C-mol glucose: biomass, glycerol, CO2."""
+    Yx = r2_yield(k)
+    return Yx, k * Yx, 1.0 - Yx * (1.0 + k)
+
+
+def coefficients(k: float = GLYCEROL_K) -> tuple:
     """(c_mu, c_pi) for sigma = c_mu*mu + c_pi*pi, in g glucose /(g cell h)."""
-    return glucose_per_gram(BIOMASS, r2_yield()), glucose_per_gram(ETHANOL, r1_yield())
+    return (glucose_per_gram(BIOMASS, r2_yield(k)),
+            glucose_per_gram(ETHANOL, r1_yield()))
 
-C_MU, C_PI = coefficients()          # 1.2802, 1.9553 -- the balanced model
+C_MU, C_PI = coefficients()
 
 # The reference (Hong / Shin & Lim) model in the same form: substrate is charged
 # for growth only, at 1/Y_xs = 10, and ethanol is produced free of charge.
