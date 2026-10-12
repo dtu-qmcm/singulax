@@ -13,7 +13,7 @@ from cyipopt import minimize_ipopt
 from singulax.substrate_product_inhibition.shooting import (
     solve_and_get_residuals_ms, switch_times_from,
 )
-from singulax.substrate_product_inhibition.odes import states_ode, vector_field
+from singulax.substrate_product_inhibition.odes import states_ode, vector_field, vf_states
 from singulax.substrate_product_inhibition.Fsin import get_Fsin_unconstrained
 from singulax.collocation import CollocParams, unpack, objective, constraints, jac_defects, detect_switches
 from singulax.substrate_product_inhibition.kinetics import BALANCED
@@ -37,7 +37,7 @@ con_jit = jax.jit(lambda z: constraints(z, p))
 if __name__ == "__main__":
     # ===== STAGE 1: collocation =====
     print("=== STAGE 1: collocation (maximise PV) ===")
-    F_init = 0.7
+    F_init = 0.5
     def _sim(x, _):
         """Forward-Euler rollout at constant feed F_init; produces the Stage-1 NLP seed z0."""
         return x + h * states_ode(x, F_init, S_F, PARAMS), x
@@ -168,7 +168,7 @@ if __name__ == "__main__":
                              solver,
                              guess0,
                              args=ms_args,
-                             max_steps=2000,
+                             max_steps=10000,
                              throw=False)
     Zopt = sol.value
     res_final = solve_and_get_residuals_ms(Zopt, ms_args)
@@ -200,12 +200,33 @@ if __name__ == "__main__":
         yi = np.asarray(s.ys); seg_t.append(np.asarray(s.ts)); seg_y.append(yi)
         seg_F.append(np.asarray(jax.vmap(lambda y: get_Fsin_unconstrained(y, (S_F, V_max, F_min, F_max, PARAMS)))(jnp.asarray(yi)))
                      if u is None else np.full(len(yi), u))
-    sb = diffrax.diffeqsolve(diffrax.ODETerm(vector_field), diffrax.Tsit5(),
-        t0=nodes_t[-1], t1=tf, y0=jnp.asarray(nodes_opt[-1]), dt0=0.01, args=(S_F, 0.0, PARAMS),
-        saveat=diffrax.SaveAt(ts=jnp.linspace(nodes_t[-1], tf, 100)), stepsize_controller=sc2, max_steps=100000, throw=False)
-    tb, yb = np.asarray(sb.ts), np.asarray(sb.ys)
+    # ---- terminal batch: states FORWARD, costate BACKWARD ----
+    tb = np.asarray(jnp.linspace(nodes_t[-1], tf, 100))
+    f_batch = lambda t, x, a: vf_states(t, x, (S_F, 0.0, PARAMS))
+    fwd = diffrax.diffeqsolve(diffrax.ODETerm(f_batch), diffrax.Tsit5(),
+        t0=nodes_t[-1], t1=tf, y0=jnp.asarray(nodes_opt[-1][:4]), dt0=0.01,
+        saveat=diffrax.SaveAt(ts=jnp.asarray(tb), dense=True),
+        stepsize_controller=sc2, max_steps=100000, throw=False)
+
+    def lam_rhs(t, lam, a):
+        """lambda_dot = -(df/dx)^T lambda, with x read off the saved forward pass."""
+        _, vjp = jax.vjp(lambda xx: f_batch(t, xx, None), fwd.evaluate(t))
+        return -vjp(lam)[0]
+
+    # lambda(tf) = [0, 0, 1, eta]: the transversality this batch is anchored on.
+    bwd = diffrax.diffeqsolve(diffrax.ODETerm(lam_rhs), diffrax.Tsit5(),
+        t0=tf, t1=nodes_t[-1], y0=jnp.array([0.0, 0.0, 1.0, 0.0]),
+        dt0=-0.01, saveat=diffrax.SaveAt(ts=jnp.asarray(tb[::-1])),
+        stepsize_controller=sc2, max_steps=100000, throw=False)
+    lam_b = np.array(bwd.ys)[::-1].copy()
+    lam_b[:, 3] += nodes_opt[-1][7] - lam_b[0, 3]       # lambda_V continuous at t_M
+    yb = np.concatenate([np.asarray(fwd.ys), lam_b], axis=1)
+
     print("Final amount of product PV(tf) =", round(float(yb[-1, 2]), 2), "g")
     print("batch lambda(tf) =", np.round(yb[-1, 4:], 4), "  (expect [0, 0, 1, eta], eta free)")
+    print("lambda(t_M)  backward =", np.round(yb[0, 4:7], 6),
+          "  shooting =", np.round(nodes_opt[-1][4:7], 6),
+          "  gap =", f"{np.max(np.abs(yb[0, 4:7] - nodes_opt[-1][4:7])):.2e}")
 
     # single continuous trajectory: bang / bang / singular segments + batch
     T = np.concatenate(seg_t + [tb])
@@ -235,6 +256,11 @@ if __name__ == "__main__":
 
     axd["phi"].plot(T, phi_all, color=oi["reddish_purple"])
     axd["phi"].axhline(0,color=oi["black"],ls="--", lw=0.9)
+    arcs = T <= sw_eff[-1]
+    lim = 1.15 * np.nanmax(np.abs(phi_all[arcs]))
+    axd["phi"].set_ylim(-lim, lim)
+    for tsw in sw_eff:
+        axd["phi"].axvline(tsw, color="0.6", ls=":", lw=0.8)
     axd["phi"].set_ylabel("$\\phi$")
     axd["phi"].set_xlabel("Time (h)")
     
