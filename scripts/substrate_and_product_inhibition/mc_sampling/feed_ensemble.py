@@ -57,6 +57,7 @@ HERE = Path(__file__).resolve().parent
 _TAG = f"balanced_cv{round(CV * 100):02d}"
 FEEDS_NPZ = HERE / f"feed_ensemble_{_TAG}.npz"
 FIGURE = HERE / f"feed_ensemble_{_TAG}.png"
+NOMINAL_NPZ = HERE / "feed_nominal_balanced.npz"   # one solve, cached
 N_PLOT = 400                             # points on the common plotting grid
 
 
@@ -252,7 +253,35 @@ def run(n=N, seed=SEED, cfg=CONFIG, out=FEEDS_NPZ, time_it=False):
     return feeds, T_grid, np.asarray(structs)
 
 
-def plot(path=FEEDS_NPZ, figure=FIGURE):
+def nominal_feed(cfg=CONFIG, out=NOMINAL_NPZ, force=False):
+    """Feed profile of the BALANCED model at the literature kinetics.
+
+    A single hybrid solve, cached, so it can be overlaid on the ensemble as a
+    reference without re-running the sampling. This is the trajectory every
+    figure in the deterministic sections refers to.
+    """
+    if out.exists() and not force:
+        z = np.load(out)
+        return z["t"], z["F"], float(z["PV"]), float(z["res_norm"])
+
+    from singulax.substrate_product_inhibition.hybrid import solve_hybrid
+    from singulax.substrate_product_inhibition.kinetics import BALANCED
+
+    print("solving the nominal balanced case (one hybrid solve)...", flush=True)
+    r = solve_hybrid(BALANCED, cfg)
+    if not r.ok:
+        print(f"   nominal solve did NOT converge: {r.status}")
+        return None, None, np.nan, r.res_norm
+    T_grid = np.linspace(0.0, cfg.t_end, N_PLOT)
+    F = np.interp(T_grid, r.T, r.F)
+    np.savez_compressed(out, t=T_grid, F=F, PV=r.PV, res_norm=r.res_norm,
+                        structure="-".join(map(str, r.structure)))
+    print(f"   PV = {r.PV:.2f} g, ||res|| = {r.res_norm:.2e}, "
+          f"structure {r.structure};  cached to {out.name}")
+    return T_grid, F, r.PV, r.res_norm
+
+
+def plot(path=FEEDS_NPZ, figure=FIGURE, nominal=True):
     """The ensemble of optimal feed profiles, one colour per draw."""
     z = np.load(path, allow_pickle=True)
     F, t = z["F"], z["t"]
@@ -279,9 +308,6 @@ def plot(path=FEEDS_NPZ, figure=FIGURE):
         "axes.grid": True, "grid.alpha": 0.25, "grid.linewidth": 0.5,
     })
     # Colour by the arc structure Stage 1 discovered, most common family first.
-    # Draws within a family share a bang/singular/batch pattern and differ only
-    # in switch times; draws in different families are qualitatively different
-    # policies, which is the thing worth seeing.
     oi = ["#56B4E9", "#E69F00", "#009E73", "#CC79A7", "#D55E00", "#0072B2"]
     fams = [s for s, _ in sorted(((s, int((structure == s).sum()))
                                   for s in set(structure.tolist())),
@@ -291,12 +317,19 @@ def plot(path=FEEDS_NPZ, figure=FIGURE):
     fig, ax = plt.subplots(figsize=(6.0, 3.8), constrained_layout=True)
     for f, s_ in zip(F, structure):
         ax.plot(t, f, color=colour[s_], lw=1.0, alpha=0.75)
+    handles = [plt.Line2D([], [], color=colour[s_], lw=2,
+                          label=f"({s_})  n={int((structure == s_).sum())}")
+               for s_ in fams]
+    if nominal:
+        t_n, F_n, pv_n, _ = nominal_feed()
+        if F_n is not None:
+            ax.plot(t_n, F_n, color="black", lw=2.0, zorder=5)
+            handles.append(plt.Line2D([], [], color="black", lw=2.0,
+                                      label=f"literature kinetics ({pv_n:.0f} g)"))
     ax.set_xlabel("Time (h)")
     ax.set_ylabel(r"$F$ (L h$^{-1}$)")
     ax.set_title(f"Optimal feed, {len(F)} sampled parameter sets", loc="left")
-    ax.legend(handles=[plt.Line2D([], [], color=colour[s_], lw=2,
-                                  label=f"({s_})  n={int((structure == s_).sum())}")
-                       for s_ in fams], loc="upper right")
+    ax.legend(handles=handles, loc="upper right")
     fig.savefig(figure, dpi=600, bbox_inches="tight")
     print(f"saved {figure}")
 
