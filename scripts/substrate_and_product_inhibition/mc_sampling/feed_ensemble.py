@@ -22,6 +22,8 @@ grouped by the arc structure Stage 1 discovered and each group is handled
 separately. That is not a workaround -- different structures are genuinely
 different boundary-value problems.
 """
+import multiprocessing as mp
+import os
 import sys
 import time
 from pathlib import Path
@@ -62,6 +64,13 @@ SCREEN_CSV = HERE / f"screening_{_TAG}.csv"        # per-draw exclusion record
 FSING_MIN = 1.0e-3
 SEED_OVERFLOW = 1.0e6
 N_PLOT = 400                             # points on the common plotting grid
+
+#: Processes for Stage 2. Every draw is independent, so this is true parallelism
+#: with no shared loop -- unlike jax.vmap, which was measured 2.6x SLOWER here
+#: because optimistix and diffrax step a batch in lockstep and the per-draw
+#: iteration counts span 17x (34 s to 576 s). A worker that finishes early just
+#: takes the next draw.
+WORKERS = max(1, min((os.cpu_count() or 2) - 2, 16))
 
 
 def shootable(seq):
@@ -190,6 +199,39 @@ def stage2_group(rows, lam0s, sws, arc_u, cfg=CONFIG, batched=False,
     return np.asarray(jnp.stack(Zs)), np.asarray(rns), time.time() - t0
 
 
+
+def _stage2_draw(job):
+    """Seed, shoot and reconstruct ONE draw. Module-level so it can be pickled.
+
+    Workers are spawned, not forked -- JAX is not fork-safe -- so each re-imports
+    this module and gets jax_enable_x64 from the top of the file.
+    """
+    i, row, seq, t_sw, lam0 = job
+    cfg = CONFIG
+    arc_u = tuple(cfg.F_max if v == 2 else cfg.F_min if v == 0 else None
+                  for v in seq[:-1])
+    M = len(arc_u)
+    p = params_from_row(row)
+    t0 = time.time()
+    g = _seed_one(p, jnp.asarray(lam0), jnp.asarray(t_sw[:M]), arc_u, cfg)
+    Z, rn = _solve_one(p, g, arc_u, cfg)
+    try:
+        T, Y, F, _, _ = _reconstruct(Z, arc_u, p, cfg)
+        feed = np.interp(np.linspace(0.0, cfg.t_end, N_PLOT),
+                         np.asarray(T), np.asarray(F))
+        PV = float(Y[-1, 2])
+    except Exception:                                             # noqa: BLE001
+        feed, PV = np.full(N_PLOT, np.nan), np.nan
+    return i, feed, float(rn), PV, "-".join(map(str, seq)), time.time() - t0
+
+
+def _save(out, feeds, T_grid, structs, res_norms, pvs, X):
+    """Write the ensemble so far. Called after each draw so a long run is resumable."""
+    np.savez_compressed(out, F=np.asarray(feeds), t=T_grid,
+                        structure=np.asarray(structs),
+                        res_norm=np.asarray(res_norms), PV=np.asarray(pvs), X=X)
+
+
 def screen(X, s1s, groups, cfg=CONFIG, out=SCREEN_CSV,
            fsing_min=FSING_MIN, seed_max=SEED_OVERFLOW):
     """Reject draws whose Stage-2 seed is already hopeless, before paying for LM.
@@ -286,12 +328,12 @@ def screen(X, s1s, groups, cfg=CONFIG, out=SCREEN_CSV,
     return kept, rows
 
 
-def run(n=N, seed=SEED, cfg=CONFIG, out=FEEDS_NPZ, time_it=False):
+def run(n=N, seed=SEED, cfg=CONFIG, out=FEEDS_NPZ, workers=WORKERS):
     """Stage 1 sequentially, then Stage 2 per structure group.
 
-    `time_it=True` additionally runs each group through jax.vmap to
-    reproduce the batched-vs-sequential comparison. It doubles the runtime,
-    so it is off by default.
+    Stage 1 and the screen run in this process; Stage 2 is spread over
+    `workers` processes, one draw each. stage2_group() is kept for the
+    batched-vs-sequential benchmark but is no longer on this path.
     """
     X = sample_X(n, seed)
     print(f"=== STAGE 1: {n} collocation solves (sequential -- IPOPT is not JAX) ===")
@@ -308,50 +350,31 @@ def run(n=N, seed=SEED, cfg=CONFIG, out=FEEDS_NPZ, time_it=False):
           f"converged draws are shootable, in {len(groups)} structure groups ===")
     groups, screened = screen(X, s1s, groups, cfg)
 
-    print(f"\n=== STAGE 2: {sum(len(v) for v in groups.values())} draws "
-          f"in {len(groups)} groups ===")
+    draws = [i for idx in groups.values() for i in idx]
+    print(f"\n=== STAGE 2: {len(draws)} draws on {workers} processes ===",
+          flush=True)
     T_grid = np.linspace(0.0, cfg.t_end, N_PLOT)
-    feeds, structs, res_norms, pvs, timings = [], [], [], [], []
+    feeds, structs, res_norms, pvs = [], [], [], []
+    jobs = [(i, X[i], s1s[i].seq, np.asarray(s1s[i].t_sw),
+             np.asarray(s1s[i].lam0)) for i in draws]
 
-    for seq, idx in sorted(groups.items(), key=lambda kv: -len(kv[1])):
-        arc_u = tuple(cfg.F_max if s == 2 else cfg.F_min if s == 0 else None
-                      for s in seq[:-1])
-        rows = [dict(zip(NAMES, X[i])) for i in idx]
-        lam0s = [s1s[i].lam0 for i in idx]
-        sws = [s1s[i].t_sw[:len(arc_u)] for i in idx]
+    t0 = time.time()
+    # spawn, not fork: JAX is not fork-safe.
+    with mp.get_context("spawn").Pool(workers) as pool:
+        for k, (i, feed, rn, PV, seq_s, dt) in enumerate(
+                pool.imap_unordered(_stage2_draw, jobs, chunksize=1)):
+            feeds.append(feed); structs.append(seq_s)
+            res_norms.append(rn); pvs.append(PV)
+            el = time.time() - t0
+            print(f"   {k + 1:3d}/{len(jobs)}  draw {i:3d}  ({seq_s})  "
+                  f"||res|| {rn:.1e}  {dt:6.1f}s   elapsed {el / 60:5.1f} min   "
+                  f"ETA {el / (k + 1) * (len(jobs) - k - 1) / 60:5.1f} min",
+                  flush=True)
+            # Save after every draw: an N=100 run is hours, and writing only on
+            # completion loses everything if it is interrupted.
+            _save(out, feeds, T_grid, structs, res_norms, pvs, X)
 
-        tag = "-".join(map(str, seq))
-        print(f"   ({tag})  n={len(idx):2d}", flush=True)
-        Z, rn, t_loop = stage2_group(rows, lam0s, sws, arc_u, cfg, batched=False)
-        line = f"   ({tag})  n={len(idx):2d}  loop {t_loop:7.1f}s"
-        if time_it and len(idx) > 1:       # only for the paper's benchmark section
-            _, _, t_vmap = stage2_group(rows, lam0s, sws, arc_u, cfg, batched=True)
-            line += f"   vmap {t_vmap:7.1f}s   speedup {t_loop / t_vmap:4.1f}x"
-            timings.append((seq, len(idx), t_vmap, t_loop))
-        print(line + f"   ||res|| {np.min(rn):.1e}-{np.max(rn):.1e}", flush=True)
-
-        # Reconstruction is cheap next to the solve, so it stays a plain loop.
-        for k, i in enumerate(idx):
-            p = params_from_row(X[i])
-            try:
-                T, Y, F, _, _ = _reconstruct(jnp.asarray(Z[k]), arc_u, p, cfg)
-            except Exception:                                     # noqa: BLE001
-                continue
-            feeds.append(np.interp(T_grid, T, F))
-            structs.append("-".join(map(str, seq)))
-            res_norms.append(float(rn[k]))
-            pvs.append(float(Y[-1, 2]))
-
-    feeds = np.asarray(feeds)
-    np.savez_compressed(out, F=feeds, t=T_grid, structure=np.asarray(structs),
-                        res_norm=np.asarray(res_norms), PV=np.asarray(pvs),
-                        X=X)
     print(f"\nwrote {out}   ({len(feeds)} profiles)")
-    if timings:
-        tot_v = sum(t[2] for t in timings); tot_l = sum(t[3] for t in timings)
-        print(f"Stage 2 total: loop {tot_l:.1f}s vs vmap {tot_v:.1f}s "
-              f"-> {tot_l / tot_v:.2f}x "
-              f"({'vmap wins' if tot_v < tot_l else 'vmap LOSES -- see stage2_group'})")
     return feeds, T_grid, np.asarray(structs)
 
 
@@ -374,8 +397,6 @@ def nominal_feed(cfg=CONFIG, out=NOMINAL_NPZ, force=False):
     if not r.ok:
         print(f"   nominal solve did NOT converge: {r.status}")
         return None, None, np.nan, r.res_norm
-    print(f"\n=== STAGE 2: {sum(len(v) for v in groups.values())} draws "
-          f"in {len(groups)} groups ===")
     T_grid = np.linspace(0.0, cfg.t_end, N_PLOT)
     F = np.interp(T_grid, r.T, r.F)
     np.savez_compressed(out, t=T_grid, F=F, PV=r.PV, res_norm=r.res_norm,
