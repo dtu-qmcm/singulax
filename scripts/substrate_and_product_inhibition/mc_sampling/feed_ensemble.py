@@ -51,13 +51,16 @@ from sampling_spi import CV, NAMES, params_from_row, sample_X   # noqa: E402
 
 CONFIG = ProblemConfig(F_init=0.5, ls_max_steps=10000)
 
-N = 20
+N = 100
 SEED = 1234
 HERE = Path(__file__).resolve().parent
 _TAG = f"balanced_cv{round(CV * 100):02d}"
 FEEDS_NPZ = HERE / f"feed_ensemble_{_TAG}.npz"
 FIGURE = HERE / f"feed_ensemble_{_TAG}.png"
 NOMINAL_NPZ = HERE / "feed_nominal_balanced.npz"   # one solve, cached
+SCREEN_CSV = HERE / f"screening_{_TAG}.csv"        # per-draw exclusion record
+FSING_MIN = 1.0e-3
+SEED_OVERFLOW = 1.0e6
 N_PLOT = 400                             # points on the common plotting grid
 
 
@@ -187,6 +190,102 @@ def stage2_group(rows, lam0s, sws, arc_u, cfg=CONFIG, batched=False,
     return np.asarray(jnp.stack(Zs)), np.asarray(rns), time.time() - t0
 
 
+def screen(X, s1s, groups, cfg=CONFIG, out=SCREEN_CSV,
+           fsing_min=FSING_MIN, seed_max=SEED_OVERFLOW):
+    """Reject draws whose Stage-2 seed is already hopeless, before paying for LM.
+
+    The seed is not an arbitrary guess: it is a forward simulation of the system
+    under the arc structure Stage 1 found, starting from lambda(0) = the NLP
+    multipliers. Evaluating the residual there is therefore a PHYSICS check
+    wearing a numerical costume -- it is large exactly when the arc structure and
+    the singular feedback are mutually inconsistent, which is also exactly when
+    Levenberg-Marquardt will grind for ~800 s and fail. One evaluation costs ~6 s.
+
+    Two mechanisms show up, in different blocks of the same residual:
+
+      starved singular entry   the arc opens at t ~ 0.2 h with the tank still at
+                               its initial litre and S < 0.15 g/L, where F_sing
+                               collapses to ~1e-4 L/h. V - Vmax comes back at
+                               -7 to -9: the tank cannot fill, and no choice of
+                               costates fixes that.
+      costate seed overflow    lambda(0) integrated forward through five or more
+                               arcs overflows (the adjoint is unstable forward),
+                               so ||seed|| ~ 1e19 before LM starts. Here the
+                               volume is fine; the numbers are not.
+
+    Every draw is written to `out` with its diagnostics and verdict, so the
+    exclusions can be reported with a mechanism attached rather than as a count.
+    """
+    import csv
+
+    rows, kept = [], {}
+    t0 = time.time()
+    for seq, idx in groups.items():
+        arc_u = tuple(cfg.F_max if v == 2 else cfg.F_min if v == 0 else None
+                      for v in seq[:-1])
+        M = len(arc_u)
+        k_sing = seq.index(1)
+        for i in idx:
+            s1 = s1s[i]
+            p = params_from_row(X[i])
+            sw = jnp.asarray(s1.t_sw[:M])
+            g = _seed_one(p, jnp.asarray(s1.lam0), sw, arc_u, cfg)
+            args = (M, cfg.S_F, cfg.V_max, cfg.F_min, cfg.F_max, cfg.t_end,
+                    jnp.asarray(cfg.x0), arc_u, p)
+            r = np.asarray(solve_and_get_residuals_ms(g, args))
+            finite = bool(np.all(np.isfinite(r)))
+            norm = float(np.linalg.norm(r)) if finite else np.inf
+            v_gap = float(r[M * 8 + 7]) if finite else np.nan
+
+            t_entry = float(s1.t_sw[k_sing - 1]) if k_sing > 0 else 0.0
+            j = int(np.searchsorted(s1.t_grid, t_entry))
+            x = s1.X[min(j, len(s1.X) - 1)]
+            y = jnp.concatenate([jnp.asarray(x), jnp.asarray(s1.lam0)])
+            F_sing = float(get_Fsin_unconstrained(
+                y, (cfg.S_F, cfg.V_max, cfg.F_min, cfg.F_max, p)))
+
+            # Test the two mechanisms separately. They are orthogonal: the
+            # overflow draw has F_sing = 0.063, perfectly healthy, and the
+            # starved draws seed at 8.8-12, nowhere near the overflow cutoff.
+            if F_sing < fsing_min:
+                verdict, why = "reject", "starved singular entry"
+            elif not finite or norm > seed_max:
+                verdict, why = "reject", "costate seed overflow"
+            else:
+                verdict, why = "keep", ""
+                kept.setdefault(seq, []).append(i)
+            rows.append(dict(draw=i, structure="-".join(map(str, seq)), M=M,
+                             seed_norm=norm, v_gap=v_gap, S_entry=float(x[1] / x[3]),
+                             F_sing=F_sing, t_entry=t_entry,
+                             verdict=verdict, reason=why))
+
+    with open(out, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
+        w.writeheader(); w.writerows(rows)
+
+    n_rej = sum(r["verdict"] == "reject" for r in rows)
+    print(f"   screened {len(rows)} draws in {time.time() - t0:.0f} s "
+          f"({(time.time() - t0) / max(len(rows), 1):.1f} s each); "
+          f"{n_rej} rejected, {len(rows) - n_rej} kept")
+    for why in sorted({r["reason"] for r in rows if r["verdict"] == "reject"}):
+        n = sum(r["reason"] == why for r in rows)
+        print(f"      {n:3d} x  {why}")
+    # Either margin thinning means the sample has found something the 20-draw
+    # calibration did not. Say so rather than silently trusting the cutoff.
+    near_f = [r for r in rows if fsing_min < r["F_sing"] < fsing_min * 100]
+    near_s = [r for r in rows if np.isfinite(r["seed_norm"])
+              and seed_max / 1e4 < r["seed_norm"] < seed_max]
+    for tag, near, fmt in [("F_sing", near_f, "{:.1e}"),
+                           ("||seed||", near_s, "{:.1f}")]:
+        if near:
+            detail = ", ".join(f"#{r['draw']} at " + fmt.format(
+                r["F_sing"] if tag == "F_sing" else r["seed_norm"]) for r in near)
+            print(f"      NOTE: {len(near)} draw(s) near the {tag} cutoff "
+                  f"({detail}) -- check {out.name}")
+    print(f"   wrote {out.name}")
+    return kept, rows
+
+
 def run(n=N, seed=SEED, cfg=CONFIG, out=FEEDS_NPZ, time_it=False):
     """Stage 1 sequentially, then Stage 2 per structure group.
 
@@ -205,9 +304,12 @@ def run(n=N, seed=SEED, cfg=CONFIG, out=FEEDS_NPZ, time_it=False):
         groups.setdefault(s1.seq, []).append(i)
 
     n_ok = sum(s1 is not None and s1.ok for s1 in s1s)
-    print(f"\n=== STAGE 2: {sum(len(v) for v in groups.values())} of {n_ok} "
+    print(f"\n=== SCREEN: {sum(len(v) for v in groups.values())} of {n_ok} "
           f"converged draws are shootable, in {len(groups)} structure groups ===")
+    groups, screened = screen(X, s1s, groups, cfg)
 
+    print(f"\n=== STAGE 2: {sum(len(v) for v in groups.values())} draws "
+          f"in {len(groups)} groups ===")
     T_grid = np.linspace(0.0, cfg.t_end, N_PLOT)
     feeds, structs, res_norms, pvs, timings = [], [], [], [], []
 
@@ -272,6 +374,8 @@ def nominal_feed(cfg=CONFIG, out=NOMINAL_NPZ, force=False):
     if not r.ok:
         print(f"   nominal solve did NOT converge: {r.status}")
         return None, None, np.nan, r.res_norm
+    print(f"\n=== STAGE 2: {sum(len(v) for v in groups.values())} draws "
+          f"in {len(groups)} groups ===")
     T_grid = np.linspace(0.0, cfg.t_end, N_PLOT)
     F = np.interp(T_grid, r.T, r.F)
     np.savez_compressed(out, t=T_grid, F=F, PV=r.PV, res_norm=r.res_norm,
@@ -289,7 +393,9 @@ def plot(path=FEEDS_NPZ, figure=FIGURE, nominal=True):
     # trajectory is whatever the reconstruction made of an unconverged Zopt.
     # Dropping them is not cherry-picking: the yield is reported, and a
     # non-solution is not a datum.
-    good = np.asarray(z["res_norm"]) < CONFIG.res_tol
+    good = ((np.asarray(z["res_norm"]) < CONFIG.res_tol)
+            & np.isfinite(np.asarray(z["PV"]))
+            & np.isfinite(F).all(axis=1))
     if (~good).sum():
         bad = np.asarray(z["res_norm"])[~good]
         print(f"dropping {int((~good).sum())} of {len(good)} draws that did not "
