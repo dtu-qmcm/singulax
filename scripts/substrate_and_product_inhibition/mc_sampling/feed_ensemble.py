@@ -259,11 +259,25 @@ def _stage2_draw(job):
     return i, feed, float(rn), PV, "-".join(map(str, seq)), time.time() - t0
 
 
-def _save(out, feeds, T_grid, structs, res_norms, pvs, X):
+def _fingerprint(n, seed, cfg):
+    """What a saved ensemble must agree with before any of it can be reused.
+
+    Resume is only safe if the rows on disk came from the SAME problem. These are
+    the things that silently change the answer: the sample, the stoichiometry and
+    the solver settings that select which optimum Stage 1 lands in.
+    """
+    from singulax.substrate_product_inhibition.kinetics import BALANCED
+    return np.array([n, seed, CV, float(BALANCED.c_mu), float(BALANCED.c_pi),
+                     cfg.t_end, cfg.F_init, cfg.ls_max_steps, cfg.S_F, cfg.V_max],
+                    dtype=float)
+
+
+def _save(out, feeds, T_grid, structs, res_norms, pvs, X, draws, fp):
     """Write the ensemble so far. Called after each draw so a long run is resumable."""
     np.savez_compressed(out, F=np.asarray(feeds), t=T_grid,
                         structure=np.asarray(structs),
-                        res_norm=np.asarray(res_norms), PV=np.asarray(pvs), X=X)
+                        res_norm=np.asarray(res_norms), PV=np.asarray(pvs), X=X,
+                        draw=np.asarray(draws), fingerprint=fp)
 
 
 def screen(X, s1s, groups, cfg=CONFIG, out=SCREEN_CSV,
@@ -362,7 +376,8 @@ def screen(X, s1s, groups, cfg=CONFIG, out=SCREEN_CSV,
     return kept, rows
 
 
-def run(n=N, seed=SEED, cfg=CONFIG, out=FEEDS_NPZ, workers=WORKERS):
+def run(n=N, seed=SEED, cfg=CONFIG, out=FEEDS_NPZ, workers=WORKERS,
+        resume=False):
     """Stage 1 sequentially, then Stage 2 per structure group.
 
     Stage 1 and the screen run in this process; Stage 2 is spread over
@@ -385,6 +400,26 @@ def run(n=N, seed=SEED, cfg=CONFIG, out=FEEDS_NPZ, workers=WORKERS):
     groups, screened = screen(X, s1s, groups, cfg)
 
     draws = [i for idx in groups.values() for i in idx]
+    fp = _fingerprint(n, seed, cfg)
+    done, feeds0, structs0, rn0, pv0 = {}, [], [], [], []
+    if resume and Path(out).exists():
+        # Reuse earlier rows only if they came from the same problem. Default is
+        # OFF: a plain run() is always a clean run, so a changed c_mu or F_init
+        # cannot quietly mix two models in one ensemble.
+        z = np.load(out, allow_pickle=True)
+        if "draw" not in z.files:
+            print(f"   resume: {Path(out).name} predates draw indexing, ignoring")
+        elif not np.allclose(z["fingerprint"], fp):
+            print(f"   resume: {Path(out).name} is from a DIFFERENT configuration, "
+                  f"ignoring it")
+        else:
+            for k, i in enumerate(z["draw"]):
+                done[int(i)] = True
+                feeds0.append(z["F"][k]); structs0.append(str(z["structure"][k]))
+                rn0.append(float(z["res_norm"][k])); pv0.append(float(z["PV"][k]))
+            print(f"   resume: reusing {len(done)} draws already in "
+                  f"{Path(out).name}")
+    draws = [i for i in draws if i not in done]
     peak = workers * GB_PER_WORKER
     print(f"\n=== STAGE 2: {len(draws)} draws on {workers} processes ===",
           flush=True)
@@ -395,7 +430,8 @@ def run(n=N, seed=SEED, cfg=CONFIG, out=FEEDS_NPZ, workers=WORKERS):
         print(f"    WARNING: that is {100 * peak / _MEM_GB:.0f}% of RAM. Pass a "
               f"smaller workers= or expect the OOM killer.", flush=True)
     T_grid = np.linspace(0.0, cfg.t_end, N_PLOT)
-    feeds, structs, res_norms, pvs = [], [], [], []
+    feeds, structs, res_norms, pvs = feeds0, structs0, rn0, pv0
+    kept_draws = [i for i in done]
     jobs = [(i, X[i], s1s[i].seq, np.asarray(s1s[i].t_sw),
              np.asarray(s1s[i].lam0)) for i in draws]
 
@@ -418,6 +454,7 @@ def run(n=N, seed=SEED, cfg=CONFIG, out=FEEDS_NPZ, workers=WORKERS):
                 pool.imap_unordered(_stage2_draw, jobs, chunksize=1)):
             feeds.append(feed); structs.append(seq_s)
             res_norms.append(rn); pvs.append(PV)
+            kept_draws.append(i)
             el = time.time() - t0
             print(f"   {k + 1:3d}/{len(jobs)}  draw {i:3d}  ({seq_s})  "
                   f"||res|| {rn:.1e}  {dt:6.1f}s   elapsed {el / 60:5.1f} min   "
@@ -425,7 +462,8 @@ def run(n=N, seed=SEED, cfg=CONFIG, out=FEEDS_NPZ, workers=WORKERS):
                   flush=True)
             # Save after every draw: an N=100 run is hours, and writing only on
             # completion loses everything if it is interrupted.
-            _save(out, feeds, T_grid, structs, res_norms, pvs, X)
+            _save(out, feeds, T_grid, structs, res_norms, pvs, X,
+                  kept_draws, fp)
 
     print(f"\nwrote {out}   ({len(feeds)} profiles)")
     return feeds, T_grid, np.asarray(structs)
