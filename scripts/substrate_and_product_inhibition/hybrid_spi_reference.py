@@ -86,6 +86,7 @@ if __name__ == "__main__":
     S = X_opt[:, 1] / X_opt[:, 3]; P = X_opt[:, 2] / X_opt[:, 3]
     print("feed-regime switches =", np.round(t_sw, 3))
     print("regime sequence      =", seq, "  (2=Fmax bang, 1=singular, 0=Fmin/batch)")
+    print("Stage 1 PV(tf)       =", round(float(X_opt[-1, 2]), 2), "g")
 
     # ---- Stage 1 plot ----
     plt.rcParams.update({
@@ -191,6 +192,7 @@ if __name__ == "__main__":
     n_nodes = num_segments + 1
     print("Stage 2 ||res|| =", float(jnp.linalg.norm(res_final)))
     print("Stage 2 switch times =", np.round(np.asarray(Zopt[n_nodes * 8:]), 3))
+    print("Stage 2 lambda(0)    =", np.round(np.asarray(Zopt[4:8]), 4))
     ns8 = num_segments * 8
     print("  ||defects|| =", round(float(jnp.linalg.norm(res_final[:ns8])), 4),
           " ||bc_start|| =", round(float(jnp.linalg.norm(res_final[ns8:ns8 + 4])), 4),
