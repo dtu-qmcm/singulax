@@ -70,7 +70,41 @@ N_PLOT = 400                             # points on the common plotting grid
 #: because optimistix and diffrax step a batch in lockstep and the per-draw
 #: iteration counts span 17x (34 s to 576 s). A worker that finishes early just
 #: takes the next draw.
-WORKERS = max(1, min((os.cpu_count() or 2) - 2, 16))
+#: Processes for Stage 2. Every draw is independent, so this is true parallelism
+#: with no shared loop -- unlike jax.vmap, which measured 2.6x SLOWER here
+#: because optimistix and diffrax step a batch in lockstep and the per-draw
+#: iteration counts span 17x.
+#:
+#: MEMORY is the binding constraint, not cores. Each worker carries its own JAX
+#: runtime plus the executables it compiles, and that grows over a run: measured
+#: 3.2-4.0 GB resident after ~40 draws. GB_PER_WORKER is deliberately above the
+#: top of that range, because the failure mode is not graceful -- too many
+#: workers invoked the OOM killer twice on a 31 GB laptop, taking the desktop
+#: session with it, and on a 36-thread machine produced "LLVM compilation error:
+#: Cannot allocate memory" when every worker tried to compile at once.
+#:
+#: Physical cores, not logical: these are compute-bound, so SMT siblings add
+#: contention rather than throughput. Leave two cores for the OS and the parent.
+#: An earlier version capped this at 8 after 16 workers drove the load average to
+#: 40 on 14 physical cores -- but that was before each worker was pinned to one
+#: compute thread, so the real fault was 16 x (a full XLA thread pool), not 16
+#: processes. With threads pinned, one worker per core is the right scale.
+#:
+#: Override with run(workers=N) if you have measured your own machine.
+GB_PER_WORKER = 5.0
+
+def _default_workers():
+    mem_gb = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2**30
+    try:                                   # physical cores, not SMT threads
+        cores = len({ln.split(":")[1].strip()
+                     for ln in open("/proc/cpuinfo")
+                     if ln.startswith("core id")}) or (os.cpu_count() or 2) // 2
+    except OSError:
+        cores = (os.cpu_count() or 2) // 2
+    return max(1, min(cores - 2, int(mem_gb // GB_PER_WORKER))), mem_gb, cores
+
+
+WORKERS, _MEM_GB, _CORES = _default_workers()
 
 
 def shootable(seq):
@@ -351,14 +385,33 @@ def run(n=N, seed=SEED, cfg=CONFIG, out=FEEDS_NPZ, workers=WORKERS):
     groups, screened = screen(X, s1s, groups, cfg)
 
     draws = [i for idx in groups.values() for i in idx]
+    peak = workers * GB_PER_WORKER
     print(f"\n=== STAGE 2: {len(draws)} draws on {workers} processes ===",
           flush=True)
+    print(f"    memory budget: ~{peak:.0f} GB of {_MEM_GB:.0f} GB "
+          f"({GB_PER_WORKER:.0f} GB/worker, measured 3.2-4.0)", flush=True)
+    if peak > 0.85 * _MEM_GB:
+        # Say it before spending an hour: OOM here kills the desktop session too.
+        print(f"    WARNING: that is {100 * peak / _MEM_GB:.0f}% of RAM. Pass a "
+              f"smaller workers= or expect the OOM killer.", flush=True)
     T_grid = np.linspace(0.0, cfg.t_end, N_PLOT)
     feeds, structs, res_norms, pvs = [], [], [], []
     jobs = [(i, X[i], s1s[i].seq, np.asarray(s1s[i].t_sw),
              np.asarray(s1s[i].lam0)) for i in draws]
 
     t0 = time.time()
+    # One compute thread per worker. These must be set HERE, in the parent: a
+    # spawned child re-imports this module -- and with it jax -- before any Pool
+    # initializer could run, so setting them in the child is too late. The arrays
+    # are 4 and 35 elements, so XLA's thread pool buys nothing and costs
+    # contention; at 16 workers with full pools the load average hit 40 on 14
+    # physical cores and throughput was worse than at 6.
+    for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+               "NUMEXPR_NUM_THREADS"):
+        os.environ[_v] = "1"
+    os.environ.setdefault("XLA_FLAGS",
+                          "--xla_cpu_multi_thread_eigen=false "
+                          "intra_op_parallelism_threads=1")
     # spawn, not fork: JAX is not fork-safe.
     with mp.get_context("spawn").Pool(workers) as pool:
         for k, (i, feed, rn, PV, seq_s, dt) in enumerate(
@@ -418,10 +471,20 @@ def plot(path=FEEDS_NPZ, figure=FIGURE, nominal=True):
             & np.isfinite(np.asarray(z["PV"]))
             & np.isfinite(F).all(axis=1))
     if (~good).sum():
-        bad = np.asarray(z["res_norm"])[~good]
-        print(f"dropping {int((~good).sum())} of {len(good)} draws that did not "
-              f"converge (||res|| {bad.min():.1e}-{bad.max():.1e}); "
-              f"{int(good.sum())} remain")
+        # Say WHICH test dropped each draw. Reporting them all as "did not
+        # converge" is false for the ones whose residual reached 1e-12 and whose
+        # reconstruction then returned nan -- two different failures.
+        rn = np.asarray(z["res_norm"])
+        n_res = int((rn >= CONFIG.res_tol).sum())
+        n_rec = int((~good & (rn < CONFIG.res_tol)).sum())
+        if n_res:
+            bad = rn[rn >= CONFIG.res_tol]
+            print(f"dropping {n_res} draw(s) whose shoot did not converge "
+                  f"(||res|| {bad.min():.1e}-{bad.max():.1e})")
+        if n_rec:
+            print(f"dropping {n_rec} draw(s) that converged but reconstructed "
+                  f"to a non-finite trajectory")
+        print(f"   {int(good.sum())} of {len(good)} remain")
     F, structure = F[good], z["structure"][good]
     if len(F) == 0:
         print("no converged draws to plot"); return
