@@ -17,6 +17,7 @@ from singulax.substrate_product_inhibition.odes import states_ode, vector_field,
 from singulax.substrate_product_inhibition.Fsin import get_Fsin_unconstrained
 from singulax.collocation import CollocParams, unpack, objective, constraints, jac_defects, detect_switches
 from singulax.substrate_product_inhibition.kinetics import BALANCED
+from singulax.substrate_product_inhibition.hybrid import _seed_feed
 
 jax.config.update("jax_enable_x64", True)
 
@@ -37,12 +38,17 @@ con_jit = jax.jit(lambda z: constraints(z, p))
 if __name__ == "__main__":
     # ===== STAGE 1: collocation =====
     print("=== STAGE 1: collocation (maximise PV) ===")
-    F_init = 0.5
-    def _sim(x, _):
-        """Forward-Euler rollout at constant feed F_init; produces the Stage-1 NLP seed z0."""
-        return x + h * states_ode(x, F_init, S_F, PARAMS), x
-    _, X_hist = jax.lax.scan(_sim, x0, None, length=N)
-    z0 = np.concatenate([np.asarray(jnp.concatenate([x0[None, :], X_hist])).ravel(), np.full(N, F_init)])
+    # Seed feed. F_init is a constant, or a sequence of (hours, F) segments
+    # carrying the bang/batch/singular shape of the answer; _seed_feed expands it
+    # to one value per control node, which is what the rollout and z0 need.
+    F_init = ((0.1, 2.0), (7.7, 0.0), (26.4, 0.333), (5.3, 0.0))
+    F_seed = _seed_feed(F_init, N, tf)            # (N,) one value per control node
+
+    def _sim(x, F):
+        """Forward-Euler rollout at the seed feed; produces the Stage-1 NLP seed z0."""
+        return x + h * states_ode(x, F, S_F, PARAMS), x
+    _, X_hist = jax.lax.scan(_sim, x0, jnp.asarray(F_seed))
+    z0 = np.concatenate([np.asarray(jnp.concatenate([x0[None, :], X_hist])).ravel(), F_seed])
 
     lb = np.full(nz, -np.inf); ub = np.full(nz, np.inf)
     lb[:nx] = ub[:nx] = np.asarray(x0)
