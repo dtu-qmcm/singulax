@@ -18,7 +18,7 @@ from singulax.substrate_product_inhibition import (
 
 NOMINAL_STRUCTURE = (0, 1, 0)
 
-CV = 0.20                                # relative sd assumed for every parameter
+CV = 0.20  # relative sd assumed for every parameter
 
 
 def _lognormal(mu_log, sigma_log):
