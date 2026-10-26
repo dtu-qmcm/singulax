@@ -46,7 +46,8 @@ class ProblemConfig(NamedTuple):
     t_end: float = 39.5             # final time [h]
     x0: tuple = (0.1, 0.001, 0.0, 1.0)   # [XV, SV, PV, V] at t = 0
     N: int = 400                    # collocation intervals
-    F_init: float = 0.5             # constant feed used to build the Stage-1 seed
+    F_init: object = 0.5            # Stage-1 seed feed: a constant, or a sequence
+                                    # of (hours, F) segments -- see _seed_feed
     ipopt_max_iter: int = 3000
     ipopt_tol: float = 1e-6
     ls_max_steps: int = 2000        # Levenberg-Marquardt steps in Stage 2
@@ -107,6 +108,34 @@ def _require_x64():
             "reach their convergence tolerance and every solve fails.")
 
 
+def _seed_feed(F_init, N, t_end):
+    """Feed profile for the Stage-1 seed, one value per control node.
+
+    A float gives the constant profile. A sequence of (hours, F) segments gives a
+    structured one -- bang, batch, singular, batch -- which matters because the NLP
+    is nonconvex and the seed selects the basin: a seed already carrying that
+    structure lands in a basin with it far more often than a constant feed, which
+    carries none.
+
+    Durations are rescaled to t_end, so they can be written in whatever units are
+    convenient and only their ratios matter.
+
+    Watch the volume budget. The feed integral should land INSIDE V_max - x0[3]:
+    measured on this model a constant 0.5 L/h overfills a 10 L tank to 20.7 L and
+    1.0 L/h to 40.4 L, so every V node past the half-way point starts outside its
+    own bound. A singular arc long enough to fill the tank is about 26 h here, not
+    the 5 h that looks natural.
+    """
+    if np.isscalar(F_init):
+        return np.full(N, float(F_init))
+    dur, lvl = np.asarray(F_init, dtype=float).reshape(-1, 2).T
+    if np.any(dur <= 0.0):
+        raise ValueError(f"F_init segment durations must be positive, got {dur}")
+    edges = np.concatenate([[0.0], np.cumsum(dur)])
+    edges = edges * (t_end / edges[-1])
+    t_ctrl = np.linspace(0.0, t_end, N + 1)[:-1]
+    return lvl[np.clip(np.searchsorted(edges, t_ctrl, side="right") - 1, 0, len(lvl) - 1)]
+
 def solve_stage1(params=DEFAULT_PARAMS, cfg=DEFAULT_CONFIG, verbose=False):
     """Collocation NLP. Returns the trajectory, the arc structure and the
     lambda(0) seed."""
@@ -120,13 +149,14 @@ def solve_stage1(params=DEFAULT_PARAMS, cfg=DEFAULT_CONFIG, verbose=False):
     grad_jit = jax.jit(jax.grad(lambda z: objective(z, p)))
     con_jit = jax.jit(lambda z: constraints(z, p))
 
-    def _sim(x, _):
-        """Forward-Euler rollout at constant feed F_init; produces the
-        Stage-1 NLP seed z0."""
-        return x + h * states_ode(x, cfg.F_init, cfg.S_F, params), x
-    _, X_hist = jax.lax.scan(_sim, x0, None, length=cfg.N)
+    F_seed = _seed_feed(cfg.F_init, cfg.N, cfg.t_end)
+
+    def _sim(x, F):
+        """Forward-Euler rollout at the seed feed; produces the Stage-1 NLP seed z0."""
+        return x + h * states_ode(x, F, cfg.S_F, params), x
+    _, X_hist = jax.lax.scan(_sim, x0, jnp.asarray(F_seed))
     z0 = np.concatenate([np.asarray(jnp.concatenate([x0[None, :], X_hist])).ravel(),
-                         np.full(cfg.N, cfg.F_init)])
+                         F_seed])
 
     lb = np.full(nz, -np.inf); ub = np.full(nz, np.inf)
     lb[:nx] = ub[:nx] = np.asarray(x0)
