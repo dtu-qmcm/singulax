@@ -28,6 +28,17 @@ import sys
 import time
 from pathlib import Path
 
+# One compute thread per process, and ONE LLVM codegen partition. These must be
+# set BEFORE jax is imported: XLA reads XLA_FLAGS once, at initialisation, so
+# setting them inside run() reached only the spawned children -- the parent,
+# which runs Stage 1 and the screen, kept the full pools every time.
+for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+           "NUMEXPR_NUM_THREADS"):
+    os.environ[_v] = "1"
+os.environ.setdefault("XLA_FLAGS",
+                      "--xla_cpu_multi_thread_eigen=false "
+                      "--xla_cpu_parallel_codegen_split_count=1")
+
 import jax
 
 jax.config.update("jax_enable_x64", True)   # REQUIRED before any array exists
@@ -65,31 +76,6 @@ FSING_MIN = 1.0e-3
 SEED_OVERFLOW = 1.0e6
 N_PLOT = 400                             # points on the common plotting grid
 
-#: Processes for Stage 2. Every draw is independent, so this is true parallelism
-#: with no shared loop -- unlike jax.vmap, which was measured 2.6x SLOWER here
-#: because optimistix and diffrax step a batch in lockstep and the per-draw
-#: iteration counts span 17x (34 s to 576 s). A worker that finishes early just
-#: takes the next draw.
-#: Processes for Stage 2. Every draw is independent, so this is true parallelism
-#: with no shared loop -- unlike jax.vmap, which measured 2.6x SLOWER here
-#: because optimistix and diffrax step a batch in lockstep and the per-draw
-#: iteration counts span 17x.
-#:
-#: MEMORY is the binding constraint, not cores. Each worker carries its own JAX
-#: runtime plus the executables it compiles, and that grows over a run: measured
-#: 3.2-4.0 GB resident after ~40 draws. GB_PER_WORKER is deliberately above the
-#: top of that range, because the failure mode is not graceful -- too many
-#: workers invoked the OOM killer twice on a 31 GB laptop, taking the desktop
-#: session with it, and on a 36-thread machine produced "LLVM compilation error:
-#: Cannot allocate memory" when every worker tried to compile at once.
-#:
-#: Physical cores, not logical: these are compute-bound, so SMT siblings add
-#: contention rather than throughput. Leave two cores for the OS and the parent.
-#: An earlier version capped this at 8 after 16 workers drove the load average to
-#: 40 on 14 physical cores -- but that was before each worker was pinned to one
-#: compute thread, so the real fault was 16 x (a full XLA thread pool), not 16
-#: processes. With threads pinned, one worker per core is the right scale.
-#:
 #: Override with run(workers=N) if you have measured your own machine.
 GB_PER_WORKER = 5.0
 
@@ -436,18 +422,8 @@ def run(n=N, seed=SEED, cfg=CONFIG, out=FEEDS_NPZ, workers=WORKERS,
              np.asarray(s1s[i].lam0)) for i in draws]
 
     t0 = time.time()
-    # One compute thread per worker. These must be set HERE, in the parent: a
-    # spawned child re-imports this module -- and with it jax -- before any Pool
-    # initializer could run, so setting them in the child is too late. The arrays
-    # are 4 and 35 elements, so XLA's thread pool buys nothing and costs
-    # contention; at 16 workers with full pools the load average hit 40 on 14
-    # physical cores and throughput was worse than at 6.
-    for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
-               "NUMEXPR_NUM_THREADS"):
-        os.environ[_v] = "1"
-    os.environ.setdefault("XLA_FLAGS",
-                          "--xla_cpu_multi_thread_eigen=false "
-                          "intra_op_parallelism_threads=1")
+    # Thread and codegen limits are set at module scope, above `import jax`, so
+    # they apply to this parent AND to every spawned child when it re-imports.
     # spawn, not fork: JAX is not fork-safe.
     with mp.get_context("spawn").Pool(workers) as pool:
         for k, (i, feed, rn, PV, seq_s, dt) in enumerate(
