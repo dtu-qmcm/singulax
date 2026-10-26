@@ -26,6 +26,29 @@ Built on [JAX](https://github.com/google/jax), [diffrax](https://github.com/patr
 
 Requires Python ≥ 3.12.
 
+### Prerequisite: IPOPT
+
+Singulax depends on [cyipopt](https://github.com/mechmotum/cyipopt). On Linux and macOS, PyPI
+only ships cyipopt as source, so it is compiled at install time against an IPOPT library that
+must **already be installed** on the system (found via `pkg-config`). If it is missing,
+`pip`/`uv` fails while building cyipopt with an error like `Package ipopt was not found`.
+
+Install IPOPT first:
+
+```sh
+yay -S coin-or-ipopt                                        # Arch (AUR; or paru)
+sudo apt install coinor-libipopt-dev pkg-config build-essential  # Ubuntu / Debian
+brew install ipopt pkg-config                               # macOS
+```
+
+On Windows, PyPI provides prebuilt cyipopt wheels with IPOPT included, so no extra step is
+needed. Without system install rights (e.g. on a cluster), `conda install -c conda-forge cyipopt`
+provides both cyipopt and IPOPT as binaries.
+
+You can check that IPOPT is visible with `pkg-config --modversion ipopt`.
+
+### Installing Singulax
+
 ```sh
 pip install singulax
 ```
