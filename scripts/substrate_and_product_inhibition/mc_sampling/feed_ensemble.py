@@ -62,7 +62,7 @@ from singulax.substrate_product_inhibition.shooting import solve_and_get_residua
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sampling_spi import CV, NAMES, params_from_row, sample_X   # noqa: E402
 
-CONFIG = ProblemConfig(F_init=0.5, ls_max_steps=10000)
+CONFIG = ProblemConfig(F_init=0.5, ls_max_steps=10000, ipopt_max_iter=20000)
 
 N = 100
 SEED = 1234
