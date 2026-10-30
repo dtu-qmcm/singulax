@@ -64,6 +64,27 @@ from sampling_spi import CV, NAMES, params_from_row, sample_X   # noqa: E402
 
 CONFIG = ProblemConfig(F_init=0.5, ls_max_steps=10000, ipopt_max_iter=20000)
 
+#: Read a label of the form (2,0,1,0,...) as (2,0,1,0) and discard the rest.
+#:
+#: MEASURED 2026-10-30 on the 12 draws the 20000-iteration run rejected: 10 carry the
+#: correct prefix and then keep switching. Their collocation feed tracks the 77 usable
+#: draws' envelope with spikes to F_max superimposed, so the extra arcs are oscillation
+#: on the singular arc, not a different optimum. They are NOT the degenerate tail past
+#: V_max -- that was measured too, and the boundary arc is 0.00-1.28 h carrying
+#: max|F| of 1e-11 to 8.8e-04, i.e. there is nothing there to truncate.
+#:
+#: Safe in a way a direct method's label would not be, because Stage 2 verifies it: a
+#: wrongly collapsed structure gives a boundary-value problem whose residual does not
+#: come down, so the draw is reported as a FAILURE rather than as a wrong answer. The
+#: one thing it cannot repair is a bad costate seed -- lam0 comes from the same solve.
+COLLAPSE = True
+
+#: How long the singular arc must be before a collapsed label is believed, as a
+#: fraction of the horizon. A genuine singular arc runs 25-30 h of the 39.5; a chatter
+#: blip is under an hour. Below this the draw is left rejected rather than shot from a
+#: seed built on a spurious arc.
+COLLAPSE_MIN_FRAC = 0.10
+
 N = 100
 SEED = 1234
 HERE = Path(__file__).resolve().parent
@@ -101,6 +122,34 @@ def shootable(seq):
     batch after it. Anything else is a different boundary-value problem.
     """
     return len(seq) >= 2 and seq[-1] == 0 and seq[-2] == 1
+
+
+def collapse(seq, t_sw, cfg, min_frac=COLLAPSE_MIN_FRAC):
+    """(2, 0, 1, 0, ...) -> (2, 0, 1, 0), keeping the first three switch times.
+
+    detect_switches labels by feed POSITION, so a singular arc that oscillates between
+    its interior value and the bounds reads as a run of alternating arcs. The structure
+    is in the prefix; what follows is discretisation noise.
+
+    Returns None -- leaving the draw rejected -- when the prefix is not (2,0,1,0), when
+    the switch times are not ordered, or when the singular arc is too short to be real.
+    That last guard matters for a label like (2,0,1,0,1,0,1,0,1,0), where the FIRST
+    singular segment may be a blip and the true arc one of the later ones; collapsing
+    onto the blip would seed Stage 2 from the wrong part of the trajectory.
+
+    t3 being early is not a problem on its own: shooting.py solves for the singular exit
+    through its V(t_M) = V_max residual, so Stage 1's third switch time is only
+    Levenberg-Marquardt's starting point.
+    """
+    t_sw = np.asarray(t_sw, dtype=float)
+    if tuple(seq[:4]) != (2, 0, 1, 0) or len(t_sw) < 3:
+        return None
+    t1, t2, t3 = (float(t) for t in t_sw[:3])
+    if not 0.0 < t1 <= t2 <= t3:
+        return None
+    if (t3 - t2) < min_frac * cfg.t_end:
+        return None
+    return (2, 0, 1, 0), np.asarray([t1, t2, t3])
 
 
 def stage1_ensemble(X, cfg=CONFIG, verbose=True):
@@ -254,7 +303,8 @@ def _fingerprint(n, seed, cfg):
     """
     from singulax.substrate_product_inhibition.kinetics import BALANCED
     return np.array([n, seed, CV, float(BALANCED.c_mu), float(BALANCED.c_pi),
-                     cfg.t_end, cfg.F_init, cfg.ls_max_steps, cfg.S_F, cfg.V_max],
+                     cfg.t_end, cfg.F_init, cfg.ls_max_steps, cfg.S_F, cfg.V_max,
+                     cfg.ipopt_max_iter, float(COLLAPSE)],
                     dtype=float)
 
 
@@ -374,11 +424,21 @@ def run(n=N, seed=SEED, cfg=CONFIG, out=FEEDS_NPZ, workers=WORKERS,
     print(f"=== STAGE 1: {n} collocation solves (sequential -- IPOPT is not JAX) ===")
     s1s = stage1_ensemble(X, cfg)
 
-    groups = {}
+    groups, n_col = {}, 0
     for i, s1 in enumerate(s1s):
-        if s1 is None or not s1.ok or not shootable(s1.seq):
+        if s1 is None or not s1.ok:
+            continue
+        if COLLAPSE and not shootable(s1.seq):
+            got = collapse(s1.seq, s1.t_sw, cfg)
+            if got is not None:
+                s1 = s1._replace(seq=got[0], t_sw=got[1])
+                s1s[i] = s1                      # screen() and the jobs read it back
+                n_col += 1
+        if not shootable(s1.seq):
             continue
         groups.setdefault(s1.seq, []).append(i)
+    if n_col:
+        print(f"\ncollapsed {n_col} oscillating label(s) to (2, 0, 1, 0)")
 
     n_ok = sum(s1 is not None and s1.ok for s1 in s1s)
     print(f"\n=== SCREEN: {sum(len(v) for v in groups.values())} of {n_ok} "
@@ -395,7 +455,8 @@ def run(n=N, seed=SEED, cfg=CONFIG, out=FEEDS_NPZ, workers=WORKERS,
         z = np.load(out, allow_pickle=True)
         if "draw" not in z.files:
             print(f"   resume: {Path(out).name} predates draw indexing, ignoring")
-        elif not np.allclose(z["fingerprint"], fp):
+        elif (np.shape(z["fingerprint"]) != np.shape(fp)
+              or not np.allclose(z["fingerprint"], fp)):
             print(f"   resume: {Path(out).name} is from a DIFFERENT configuration, "
                   f"ignoring it")
         else:
