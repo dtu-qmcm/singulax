@@ -48,10 +48,13 @@ ENSEMBLE = MC / "feed_ensemble_balanced_cv20.npz"
 NOMINAL = MC / "feed_nominal_balanced.npz"
 FIGURE = HERE / "crossfeed.png"
 
-#: Okabe-Ito. Two series -- draws the nominal feed barely costs, and draws it costs a
-#: lot -- so two hues, the most CVD-separated pair in the set. The identity line and
-#: the threshold are ink, not series.
-C_OK, C_BAD, C_INK = "#0072B2", "#D55E00", "#444444"
+#: Okabe-Ito, in the SAME ROLES sampling_spi.py assigns them: sky blue carries the
+#: data, vermillion the contrast series, black the reference lines. Matching the roles
+#: and not merely the palette is what makes the figures read as one set -- a reader who
+#: has learnt that vermillion means "the costly case" on one figure keeps that reading.
+OI = {"orange": "#E69F00", "sky_blue": "#56B4E9", "bluish_green": "#009E73",
+      "vermillion": "#D55E00", "black": "#000000", "reddish_purple": "#CC79A7"}
+C_OK, C_BAD, C_INK = OI["sky_blue"], OI["vermillion"], OI["black"]
 
 #: Loss above which a draw counts as materially hurt by the nominal feed (%).
 THRESH = 5.0
