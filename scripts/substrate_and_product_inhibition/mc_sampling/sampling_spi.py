@@ -15,8 +15,20 @@ from scipy.stats import lognorm, norm, qmc, uniform
 from singulax.substrate_product_inhibition import (
     solve_stage1, BALANCED, stoichiometry as st,
 )
+from singulax.substrate_product_inhibition.hybrid import DEFAULT_CONFIG
 
-NOMINAL_STRUCTURE = (0, 1, 0)
+#: solve_stage1's own default is ipopt_max_iter = 3000, at which IPOPT is abandoned
+#: FEASIBLE but not optimal on the harder draws. `ok` only tests feasibility, so those
+#: pass while reporting structures like (0,1,0) or (0,1,0,1,0,...x14) -- the initial
+#: bang missing and the singular arc chattering. Measured over 100 draws, 3000 ->
+#: 20000 took exact (2,0,1,0) from 56 to 87 and usable draws from 50 to 77.
+SAMPLING_CONFIG = DEFAULT_CONFIG._replace(ipopt_max_iter=20000)
+
+#: What the literature kinetics give. (0, 1, 0) until 2026-10-30, which was an
+#: artifact of ipopt_max_iter = 3000: Stage 1 was abandoned feasible-but-not-optimal
+#: and dropped the initial bang on a third of all draws. At 20000 the nominal case
+#: and 87 of 100 sampled draws return (2, 0, 1, 0).
+NOMINAL_STRUCTURE = (2, 0, 1, 0)
 
 CV = 0.20  # relative sd assumed for every parameter
 
@@ -106,7 +118,7 @@ def run_sampling(n=N, seed=SEED, out=RESULTS_CSV, method="lhs"):
         for i, row in enumerate(X):
             t0 = time.time()
             try:
-                s1 = solve_stage1(params_from_row(row))
+                s1 = solve_stage1(params_from_row(row), SAMPLING_CONFIG)
                 status = "ok" if s1.ok else f"defects {s1.defect_norm:.2e}"
                 pv, dn, seq = s1.PV, s1.defect_norm, s1.seq
                 yx, yp, ca = _ledger(s1)
@@ -142,20 +154,72 @@ def _src(X, Y):
     return beta[1:], float(r2)
 
 
-def analyse(path=RESULTS_CSV, figure=FIGURE):
-    """Summary table + figure from a results CSV. Safe to re-run without re-solving."""
+def _load_csv(path):
+    """This module's own Stage-1 sweep. Carries the balance diagnostics."""
     with open(path, newline="") as fh:                # csv, not genfromtxt: status
         rows = list(csv.DictReader(fh))               # strings contain commas
-    ok = np.array([r["ok"] == "1" for r in rows])
-    status = np.array([r["status"] for r in rows])
-    structure = np.array([r["structure"] for r in rows])
-    PV = np.array([float(r["PV"]) for r in rows])
-    X_all = np.array([[float(r[n]) for n in NAMES] for r in rows])
-    Y_ps = np.array([float(r["Y_ps_overall"]) for r in rows])
-    Y_xs = np.array([float(r["Y_xs_overall"]) for r in rows])
-    C_acc = np.array([float(r["carbon_accounted"]) for r in rows])
+    return (np.array([r["ok"] == "1" for r in rows]),
+            np.array([r["status"] for r in rows]),
+            np.array([r["structure"] for r in rows]),
+            np.array([float(r["PV"]) for r in rows]),
+            np.array([[float(r[n]) for n in NAMES] for r in rows]),
+            np.array([float(r["Y_ps_overall"]) for r in rows]),
+            np.array([float(r["Y_xs_overall"]) for r in rows]),
+            np.array([float(r["carbon_accounted"]) for r in rows]))
+
+
+def _load_npz(path, res_tol=1.0e-6):
+    """feed_ensemble.py's hybrid ensemble, read without re-solving anything.
+
+    Better data than this module's own CSV on three counts: PV is Stage 2's exact
+    value rather than Stage 1's collocation estimate, Stage 1 ran to optimality
+    (ipopt_max_iter = 20000, where the CSV's draws were abandoned at 3000 and a
+    third of them reported no initial bang), and there are more converged draws.
+
+    The npz holds rows only for the draws that reached Stage 2, so everything is
+    scattered back into full-length arrays indexed by draw, with the rest marked
+    not-ok. No balance diagnostics: those come from _ledger(s1), which needs the
+    Stage-1 result object, so the three yield arrays come back None and the caller
+    skips that block.
+    """
+    z = np.load(path, allow_pickle=True)
+    X_all = np.asarray(z["X"])                        # every sampled row
+    draw = np.asarray(z["draw"]).astype(int)          # which of them were shot
+    pv_shot = np.asarray(z["PV"])
+    rn = np.asarray(z["res_norm"])
+    finite = np.isfinite(pv_shot) & np.isfinite(np.asarray(z["F"])).all(axis=1)
+
+    n_all = X_all.shape[0]
+    PV = np.full(n_all, np.nan)
+    structure = np.full(n_all, "rejected at Stage 1", dtype=object)
+    status = np.full(n_all, "rejected before Stage 2", dtype=object)
+    ok = np.zeros(n_all, dtype=bool)
+
+    PV[draw] = pv_shot
+    structure[draw] = np.asarray(z["structure"])
+    shot_ok = (rn < res_tol) & finite
+    ok[draw[shot_ok]] = True
+    status[draw[shot_ok]] = "ok"
+    status[draw[~shot_ok & (rn >= res_tol)]] = "Stage 2 residual"
+    status[draw[~shot_ok & (rn < res_tol)]] = "reconstruction non-finite"
+    return ok, status.astype(str), structure.astype(str), PV, X_all, None, None, None
+
+
+def analyse(path=RESULTS_CSV, figure=FIGURE):
+    """Summary table + figure from a results CSV, or from feed_ensemble's npz.
+
+    Safe to re-run without re-solving: both inputs are already-computed results.
+
+        analyse()                                     # this module's Stage-1 CSV
+        analyse(FEEDS_NPZ, HERE / "sens_hybrid.png")  # the hybrid ensemble
+    """
+    path = Path(path)
+    loader = _load_npz if path.suffix == ".npz" else _load_csv
+    ok, status, structure, PV, X_all, Y_ps, Y_xs, C_acc = loader(path)
+    rows = X_all
     Y, X = PV[ok], X_all[ok]
     d = dict(ok=ok, status=status, structure=structure, PV=PV, X=X_all)
+    print(f"source: {path.name}")
 
     print(f"\n=== {len(rows)} samples: {ok.sum()} converged, {(~ok).sum()} failed ===")
     for msg in np.unique(status[~ok]):
@@ -181,13 +245,18 @@ def analyse(path=RESULTS_CSV, figure=FIGURE):
                      ("median", np.median(Y)), ("97.5%", np.percentile(Y, 97.5)), ("max", Y.max())]:
         print(f"   {label:>7s} = {v:9.3f}")
 
-    print("\nbalance diagnostics (these are what the reference model could not satisfy):")
-    print(f"   ethanol yield Y_ps   {np.nanmin(Y_ps[ok]):.4f} - {np.nanmax(Y_ps[ok]):.4f} g/g"
-          f"   (Gay-Lussac {st.GAY_LUSSAC:.4f}; violations: {int((Y_ps[ok] > st.GAY_LUSSAC + 1e-9).sum())})")
-    print(f"   biomass yield Y_xs   {np.nanmin(Y_xs[ok]):.4f} - {np.nanmax(Y_xs[ok]):.4f} g/g"
-          f"   (an OUTPUT; anaerobic yeast 0.08-0.12)")
-    print(f"   carbon as X+P        {np.nanmin(C_acc[ok]):.4f} - {np.nanmax(C_acc[ok]):.4f}"
-          f"   (rest is CO2; must stay below 1)")
+    if Y_ps is None:
+        print("\nbalance diagnostics: not stored in this source -- they come from "
+              "_ledger(s1),\n   which needs the Stage-1 result object. Run "
+              "run_sampling() if you need them.")
+    else:
+        print("\nbalance diagnostics (these are what the reference model could not satisfy):")
+        print(f"   ethanol yield Y_ps   {np.nanmin(Y_ps[ok]):.4f} - {np.nanmax(Y_ps[ok]):.4f} g/g"
+              f"   (Gay-Lussac {st.GAY_LUSSAC:.4f}; violations: {int((Y_ps[ok] > st.GAY_LUSSAC + 1e-9).sum())})")
+        print(f"   biomass yield Y_xs   {np.nanmin(Y_xs[ok]):.4f} - {np.nanmax(Y_xs[ok]):.4f} g/g"
+              f"   (an OUTPUT; anaerobic yeast 0.08-0.12)")
+        print(f"   carbon as X+P        {np.nanmin(C_acc[ok]):.4f} - {np.nanmax(C_acc[ok]):.4f}"
+              f"   (rest is CO2; must stay below 1)")
 
     beta, r2 = _src(X, Y)
     n, m = X.shape
@@ -277,6 +346,12 @@ def _plot(X, Y, beta, r2, figure):
 
 
 if __name__ == "__main__":
-    if "--analyse" not in sys.argv:      # --analyse re-reads the CSV without re-solving
-        run_sampling()
-    analyse()
+    if "--hybrid" in sys.argv:
+        # Sensitivity from feed_ensemble.py's results: nothing is re-solved, and the
+        # draws are Stage-2 exact rather than Stage-1 collocation. Separate figure
+        # name so it cannot overwrite the CSV-based one.
+        analyse(HERE / f"feed_ensemble_{_TAG}.npz", HERE / f"sampling_spi_{_TAG}_hybrid.png")
+    else:
+        if "--analyse" not in sys.argv:  # --analyse re-reads the CSV without re-solving
+            run_sampling()
+        analyse()
