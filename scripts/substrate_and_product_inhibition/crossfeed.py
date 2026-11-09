@@ -48,13 +48,19 @@ ENSEMBLE = MC / "feed_ensemble_balanced_cv20.npz"
 NOMINAL = MC / "feed_nominal_balanced.npz"
 FIGURE = HERE / "crossfeed.png"
 
-#: Okabe-Ito, in the SAME ROLES sampling_spi.py assigns them: sky blue carries the
-#: data, vermillion the contrast series, black the reference lines. Matching the roles
-#: and not merely the palette is what makes the figures read as one set -- a reader who
-#: has learnt that vermillion means "the costly case" on one figure keeps that reading.
+#: Okabe-Ito, in the SAME ROLES sampling_spi.py assigns them: black for reference
+#: lines, and the bluish-green / vermillion pair for good vs bad -- exactly how the SRC
+#: tornado already reads them ("increases PV" / "decreases PV"). Matching the roles and
+#: not merely the palette is what makes the figures read as one set.
+#:
+#: Green against vermillion is the tightest pair in the set under red-green CVD: OKLab
+#: dE is 25.8 normal, 13.0 protanopia, 11.0 deuteranopia. Above the dE >= 8 target, but
+#: with less headroom than sky blue would give, so the second encoding is not optional
+#: -- panel (a) separates the series by MARKER SHAPE and panel (b) by position either
+#: side of the threshold. Keep both if these colours are ever restyled.
 OI = {"orange": "#E69F00", "sky_blue": "#56B4E9", "bluish_green": "#009E73",
       "vermillion": "#D55E00", "black": "#000000", "reddish_purple": "#CC79A7"}
-C_OK, C_BAD, C_INK = OI["sky_blue"], OI["vermillion"], OI["black"]
+C_OK, C_BAD, C_INK = OI["bluish_green"], OI["vermillion"], OI["black"]
 
 #: Loss above which a draw counts as materially hurt by the nominal feed (%).
 THRESH = 5.0
