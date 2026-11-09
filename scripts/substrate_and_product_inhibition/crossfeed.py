@@ -48,8 +48,13 @@ ENSEMBLE = MC / "feed_ensemble_balanced_cv20.npz"
 NOMINAL = MC / "feed_nominal_balanced.npz"
 FIGURE = HERE / "crossfeed.png"
 
-#: Okabe-Ito. One series, so one hue; the identity line is ink, not a series.
-C_B, C_INK = "#0072B2", "#444444"
+#: Okabe-Ito. Two series -- draws the nominal feed barely costs, and draws it costs a
+#: lot -- so two hues, the most CVD-separated pair in the set. The identity line and
+#: the threshold are ink, not series.
+C_OK, C_BAD, C_INK = "#0072B2", "#D55E00", "#444444"
+
+#: Loss above which a draw counts as materially hurt by the nominal feed (%).
+THRESH = 5.0
 
 
 def _rhs(t, y, args):
@@ -110,7 +115,7 @@ def main():
           f"p90 {np.percentile(loss_b, 90):5.2f} %   worst {loss_b.max():5.2f} %")
     print(f"    mean  {loss_b.mean():5.2f} +- {loss_b.std(ddof=1):.2f} %  "
           f"(skewed -- report the median)")
-    print(f"    above 5 % loss: {(loss_b > 5).sum()} of {n}\n")
+    print(f"    above {THRESH:g} % loss: {(loss_b > THRESH).sum()} of {n}\n")
 
     plt.rcParams.update({
         "font.family": "serif", "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
@@ -120,30 +125,53 @@ def main():
         "legend.frameon": False, "figure.dpi": 300, "savefig.dpi": 600,
         "axes.grid": True, "grid.alpha": 0.25, "grid.linewidth": 0.5,
     })
-    fig, (axL, axR) = plt.subplots(1, 2, figsize=(7.4, 3.4), constrained_layout=True)
+    fig, (axL, axR) = plt.subplots(1, 2, figsize=(7.4, 3.3), constrained_layout=True)
 
-    lo = min(pv_own.min(), pv_b.min()) - 10
-    hi = max(pv_own.max(), pv_b.max()) + 10
-    axL.plot([lo, hi], [lo, hi], color=C_INK, lw=1.0, ls="--", zorder=1)
-    axL.scatter(pv_own, pv_b, s=16, color=C_B, alpha=0.8, zorder=3,
-                edgecolor="white", linewidth=0.4)
-    axL.annotate("no loss", (hi, hi), textcoords="offset points", xytext=(-4, -12),
-                 ha="right", fontsize=7.5, color=C_INK)
+    costly = loss_b > THRESH
+    n_bad = int(costly.sum())
+
+    # --- (a) own optimum vs nominal feed, draw by draw --------------------------
+    # Equal aspect with the identity line is the point: every marker must fall ON or
+    # BELOW it, because no feed can beat a model's own optimum. The empty upper-left
+    # triangle is the sanity check, so it is kept rather than cropped away.
+    lo = min(pv_own.min(), pv_b.min()) - 12
+    hi = max(pv_own.max(), pv_b.max()) + 12
+    axL.plot([lo, hi], [lo, hi], color=C_INK, lw=0.9, ls=(0, (5, 3)), zorder=1,
+             label="no loss ($y = x$)")
+    axL.scatter(pv_own[~costly], pv_b[~costly], s=17, color=C_OK, alpha=0.85,
+                edgecolor="white", linewidth=0.4, zorder=3,
+                label=f"loss $\\leq$ {THRESH:g}% ({n - n_bad} draws)")
+    axL.scatter(pv_own[costly], pv_b[costly], s=21, color=C_BAD, alpha=0.9,
+                marker="D", edgecolor="white", linewidth=0.4, zorder=4,
+                label=f"loss $>$ {THRESH:g}% ({n_bad} draws)")
     axL.set_xlabel(r"$PV$ under the model's own optimal feed (g)")
     axL.set_ylabel(r"$PV$ under the nominal feed (g)")
-    axL.set_title("Nominal feed applied to each sampled model", loc="left")
+    axL.set_title("(a)  Nominal feed applied to each sampled model", loc="left")
     axL.set_xlim(lo, hi); axL.set_ylim(lo, hi)
     axL.set_aspect("equal", adjustable="box")
+    axL.legend(loc="upper left", handletextpad=0.5, borderpad=0.2, labelspacing=0.35)
 
-    # One series, so no legend box -- the title names it and the median is annotated.
-    axR.hist(loss_b, bins=24, color=C_B, alpha=0.8)
-    axR.axvline(5.0, color=C_INK, lw=1.0, ls="--", zorder=3)
-    axR.annotate(f"median {q2:.2f} %\n{(loss_b > 5).sum()} of {n} above 5 %",
-                 (0.97, 0.95), xycoords="axes fraction", ha="right", va="top",
+    # --- (b) the loss distribution ----------------------------------------------
+    # Bin width divides THRESH exactly, so the threshold is a bin EDGE and no bar
+    # straddles it. Without that, the bar spanning 4-5.5 % sits half on each side of
+    # the line and the split stops being readable off the bars. Colour carries the
+    # same 5 % split as panel (a): these bars are those diamonds.
+    bw = THRESH / 4.0
+    edges = np.arange(0.0, np.ceil(loss_b.max() / bw) * bw + bw, bw)
+    axR.hist([loss_b[~costly], loss_b[costly]], bins=edges, stacked=True,
+             color=[C_OK, C_BAD], edgecolor="white", linewidth=0.4, zorder=2,
+             label=[f"loss $\\leq$ {THRESH:g}%  ({n - n_bad} draws)",
+                    f"loss $>$ {THRESH:g}%  ({n_bad} draws)"])
+    axR.axvline(THRESH, color=C_INK, lw=0.9, ls=(0, (5, 3)), zorder=4)
+    axR.annotate(f"median {q2:.2f}%\nworst {loss_b.max():.1f}%",
+                 (0.975, 0.62), xycoords="axes fraction", ha="right", va="top",
                  fontsize=7.5, color=C_INK)
     axR.set_xlabel("Product loss vs. the model's own optimum (%)")
     axR.set_ylabel("Draws")
-    axR.set_title("Cost of using the nominal feed", loc="left")
+    axR.set_title("(b)  Cost of using the nominal feed", loc="left")
+    axR.set_xlim(-bw, edges[-1])
+    axR.legend(loc="upper right", handletextpad=0.5, borderpad=0.2,
+               labelspacing=0.35)
 
     fig.savefig(FIGURE, dpi=600, bbox_inches="tight")
     print(f"saved {FIGURE}")
