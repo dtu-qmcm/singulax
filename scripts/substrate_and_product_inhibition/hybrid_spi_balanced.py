@@ -122,19 +122,32 @@ if __name__ == "__main__":
     ax[0].plot(t_grid, X_opt[:,0], label=r"$XV$", color=oi["sky_blue"])
     ax[0].plot(t_grid, X_opt[:,1], label=r"$SV$", color=oi["orange"])
     ax[0].plot(t_grid, X_opt[:,2]/5, label=r"$PV/5$", color=oi["bluish_green"])
-    ax[0].plot(t_grid, X_opt[:,3], label=r"$V$", color=oi["vermillion"])
-    ax[0].set_ylabel("Mass (g), Volume (L)")
-    ax[0].legend(ncol=4, loc="best")
+    ax[0].set_ylabel("Mass (g)")
+    # volume on its own right-hand axis
+    axV = ax[0].twinx()
+    axV.plot(t_grid, X_opt[:,3], label=r"$V$", color=oi["vermillion"], ls="-.")
+    axV.set_ylabel("Volume (L)")
+    axV.set_ylim(bottom=0)
+    axV.grid(False)
+    h1, l1 = ax[0].get_legend_handles_labels()
+    h2, l2 = axV.get_legend_handles_labels()
+    ax[0].legend(h1 + h2, l1 + l2, ncol=4, loc="lower right", bbox_to_anchor=(1.0, 1.01),
+                 frameon=False, borderaxespad=0.0)
 
     ax[1].plot(t_grid, S, label=r"$S$", color=oi["orange"], ls="--", lw=1.8)
     ax[1].plot(t_grid, P, label=r"$P$", color=oi["bluish_green"], ls="--", lw=1.8)
     ax[1].set_ylabel("Concentration (g L$^{-1}$)")
-    ax[1].legend(ncol=2, loc="best")
+    ax[1].legend(ncol=2, loc="lower right", bbox_to_anchor=(1.0, 1.01),
+                 frameon=False, borderaxespad=0.0)
 
     ax[2].step(t_ctrl,U_opt,where="post",color=oi["black"])
     ax[2].set_ylabel(r"$F$ (L h$^{-1}$)")
     ax[2].set_xlabel("Time (h)")
     ax[2].set_ylim(F_min - 0.1, F_max + 0.1)
+
+    # panel labels above each subplot, left-aligned
+    for a, lab in zip(ax, ["(a)", "(b)", "(c)"]):
+        a.set_title(lab, loc="left")
 
     fig.savefig(os.path.join(here, "spi_stage1_balanced.png"), dpi=600, bbox_inches="tight")
     print("saved spi_stage1_balanced.png")
