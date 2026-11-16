@@ -125,7 +125,7 @@ if __name__ == "__main__":
     ax[0].set_ylabel("Mass (g)")
     # volume on its own right-hand axis
     axV = ax[0].twinx()
-    axV.plot(t_grid, X_opt[:,3], label=r"$V$", color=oi["vermillion"], ls="-.")
+    axV.plot(t_grid, X_opt[:,3], label=r"$V$", color=oi["vermillion"])
     axV.set_ylabel("Volume (L)")
     axV.set_ylim(bottom=0)
     axV.grid(False)
@@ -269,7 +269,7 @@ if __name__ == "__main__":
     axd["state"].set_ylabel("Mass (g)")
     # volume on its own right-hand axis
     axV2 = axd["state"].twinx()
-    axV2.plot(T, Yf[:, 3], label=r"$V$", color=oi["vermillion"], ls="-.")
+    axV2.plot(T, Yf[:, 3], label=r"$V$", color=oi["vermillion"])
     axV2.set_ylabel("Volume (L)")
     axV2.set_ylim(bottom=0)
     axV2.grid(False)
