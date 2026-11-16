@@ -275,13 +275,13 @@ if __name__ == "__main__":
     axV2.grid(False)
     h1, l1 = axd["state"].get_legend_handles_labels()
     h2, l2 = axV2.get_legend_handles_labels()
-    axd["state"].legend(h1 + h2, l1 + l2, ncol=4, loc="lower center", bbox_to_anchor=(0.5, 1.01),
+    axd["state"].legend(h1 + h2, l1 + l2, ncol=2, loc="lower right", bbox_to_anchor=(1.0, 1.01),
                         frameon=False, borderaxespad=0.0)
 
     axd["SP"].plot(T, S_all, label="S", color=oi["orange"], ls="--", lw=1.8)
     axd["SP"].plot(T, P_all, label="P", color=oi["bluish_green"], ls="--", lw=1.8)
     axd["SP"].set_ylabel(r"Concentration (g L$^{-1}$)")
-    axd["SP"].legend(ncol=2, loc="lower center", bbox_to_anchor=(0.5, 1.01),
+    axd["SP"].legend(ncol=2, loc="lower right", bbox_to_anchor=(1.0, 1.01),
                      frameon=False, borderaxespad=0.0)
 
     axd["phi"].plot(T, phi_all, color=oi["reddish_purple"])
@@ -319,6 +319,11 @@ if __name__ == "__main__":
     for a in axd.values():
         for tsw in sw_eff:
             a.axvline(tsw,color="0.5",ls=":",lw=0.8)
+
+    # panel labels above each subplot, left-aligned
+    for key, lab in zip(["state", "SP", "phi", "F", "adj"], ["(a)", "(b)", "(c)", "(d)", "(e)"]):
+        axd[key].set_title(lab, loc="left")
+
     fig.savefig(os.path.join(here, "spi_stage2_balanced.png"), dpi=600, bbox_inches="tight")
     print("saved spi_stage2_balanced.png")
 
