@@ -10,9 +10,9 @@ whose kinetics differ.
 So this applies the NOMINAL feed -- the one computed from literature kinetics -- to
 each sampled model, which is what a practitioner actually does.
 
-The volume constraint cannot be violated: Vdot = F, so V(t) depends only on the feed
-and is identical under any kinetics. Nothing goes infeasible; the only cost is lost
-product. For draw i the loss is
+Vdot = F, so V(t) depends only on the feed and is identical under any kinetics. The
+re-simulation cuts the feed at V_max (see _rhs) so that the discretised profile
+cannot overfill the reactor. Nothing goes infeasible; the only cost is lost product. For draw i the loss is
 
     loss_i = 1 - PV_i(F*_nominal) / PV_i(F*_i)
 
@@ -74,9 +74,19 @@ def _rhs(t, y, args):
     is deliberate -- an adaptive solver handles a kink far better than a jump, and
     0.099 h against a 39.5 h horizon moves PV by far less than the effect being
     measured.
+
+    The feed is cut once the reactor is full (V >= V_max), smoothly over 1 mL. The
+    stored 400-point profile integrates to slightly MORE than the exact optimum's
+    volume (V(t_f) ~ 10.07 L, not 10 L), and the extra feed is extra substrate and
+    extra product: without the cut the nominal feed on the nominal model gives
+    570.7 g against its own optimum of 566.5 g, and 39 of 82 draws showed a
+    NEGATIVE loss -- the reference feed "beating" the draw's own optimum, which is
+    impossible. With it the nominal case reproduces 566.4 g and no loss is < 0.
+    A real reactor stops feeding when full, so this is also the physical answer.
     """
     t_grid, F_grid, S_F, p = args
-    return f_vec(y, p) + g_vec(y, S_F) * jnp.interp(t, t_grid, F_grid)
+    full = jnp.clip((CFG.V_max - y[3]) / 1e-3, 0.0, 1.0)     # 1 below V_max, 0 at it
+    return f_vec(y, p) + g_vec(y, S_F) * jnp.interp(t, t_grid, F_grid) * full
 
 
 @jax.jit
@@ -113,6 +123,15 @@ def main():
     # The nominal feed applied to each sampled model.
     pv_b = np.array([float(simulate(tj, Fnj, p)) for p in rows])
     loss_b = 100.0 * (1.0 - pv_b / pv_own)
+    # Sanity checks: the nominal feed must reproduce its own optimum on the nominal
+    # model, and no feed may beat a draw's own optimum (the histogram starts at 0).
+    from singulax.substrate_product_inhibition.kinetics import BALANCED
+    pv_check = float(simulate(tj, Fnj, BALANCED))
+    print(f"check: nominal feed on nominal model {pv_check:.2f} g "
+          f"(stored optimum {pv_nom_own:.2f} g)")
+    if (loss_b < 0).any():
+        print(f"   WARNING: {(loss_b < 0).sum()} negative loss(es), min "
+              f"{loss_b.min():.3f} % -- these fall outside the histogram")
 
     q1, q2, q3 = np.percentile(loss_b, [25, 50, 75])
     print("nominal feed -> sampled models")
@@ -134,37 +153,18 @@ def main():
         "legend.frameon": False, "figure.dpi": 300, "savefig.dpi": 600,
         "axes.grid": True, "grid.alpha": 0.25, "grid.linewidth": 0.5,
     })
-    fig, (axL, axR) = plt.subplots(1, 2, figsize=(7.4, 3.3), constrained_layout=True)
+    # Single panel: the loss distribution. (The PV-vs-PV scatter that used to sit
+    # beside it was dropped from the paper; the numbers above still report it.)
+    fig, axR = plt.subplots(figsize=(5.0, 3.3), constrained_layout=True)
 
     costly = loss_b > THRESH
     n_bad = int(costly.sum())
-
-    # --- (a) own optimum vs nominal feed, draw by draw --------------------------
-    # Equal aspect with the identity line is the point: every marker must fall ON or
-    # BELOW it, because no feed can beat a model's own optimum. The empty upper-left
-    # triangle is the sanity check, so it is kept rather than cropped away.
-    lo = min(pv_own.min(), pv_b.min()) - 12
-    hi = max(pv_own.max(), pv_b.max()) + 12
-    axL.plot([lo, hi], [lo, hi], color=C_INK, lw=0.9, ls=(0, (5, 3)), zorder=1,
-             label="no loss ($y = x$)")
-    axL.scatter(pv_own[~costly], pv_b[~costly], s=17, color=C_OK, alpha=0.85,
-                edgecolor="white", linewidth=0.4, zorder=3,
-                label=f"loss $\\leq$ {THRESH:g}% ({n - n_bad} draws)")
-    axL.scatter(pv_own[costly], pv_b[costly], s=21, color=C_BAD, alpha=0.9,
-                marker="D", edgecolor="white", linewidth=0.4, zorder=4,
-                label=f"loss $>$ {THRESH:g}% ({n_bad} draws)")
-    axL.set_xlabel(r"$PV$ under the model's own optimal feed (g)")
-    axL.set_ylabel(r"$PV$ under the nominal feed (g)")
-    axL.set_title("(a)  Nominal feed applied to each sampled model", loc="left")
-    axL.set_xlim(lo, hi); axL.set_ylim(lo, hi)
-    axL.set_aspect("equal", adjustable="box")
-    axL.legend(loc="upper left", handletextpad=0.5, borderpad=0.2, labelspacing=0.35)
 
     # --- (b) the loss distribution ----------------------------------------------
     # Bin width divides THRESH exactly, so the threshold is a bin EDGE and no bar
     # straddles it. Without that, the bar spanning 4-5.5 % sits half on each side of
     # the line and the split stops being readable off the bars. Colour carries the
-    # same 5 % split as panel (a): these bars are those diamonds.
+    # 5 % split reported in the console summary.
     bw = THRESH / 4.0
     edges = np.arange(0.0, np.ceil(loss_b.max() / bw) * bw + bw, bw)
     axR.hist([loss_b[~costly], loss_b[costly]], bins=edges, stacked=True,
@@ -177,8 +177,11 @@ def main():
                  fontsize=7.5, color=C_INK)
     axR.set_xlabel("Product loss vs. the model's own optimum (%)")
     axR.set_ylabel("Draws")
-    axR.set_title("(b)  Cost of using the nominal feed", loc="left")
-    axR.set_xlim(-bw, edges[-1])
+    # axes meet at (0, 0): no margin before the first bin or under the bars
+    axR.set_xlim(0.0, edges[-1])
+    axR.set_ylim(bottom=0)
+    axR.margins(x=0, y=0)
+    axR.set_ylim(bottom=0, top=axR.get_ylim()[1] * 1.05)
     axR.legend(loc="upper right", handletextpad=0.5, borderpad=0.2,
                labelspacing=0.35)
 
