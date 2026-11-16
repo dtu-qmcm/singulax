@@ -582,19 +582,22 @@ def plot(path=FEEDS_NPZ, figure=FIGURE, nominal=True):
     fig, ax = plt.subplots(figsize=(6.0, 3.8), constrained_layout=True)
     for f, s_ in zip(F, structure):
         ax.plot(t, f, color=colour[s_], lw=1.0, alpha=0.75)
-    handles = [plt.Line2D([], [], color=colour[s_], lw=2,
-                          label=f"({s_})  n={int((structure == s_).sum())}")
-               for s_ in fams]
+    # one entry for the ensemble (every converged draw shares one structure, which
+    # the caption states) plus the reference (literature-kinetics) feed
+    handles = [plt.Line2D([], [], color=colour[fams[0]], lw=2,
+                          label=f"sampled models ($n = {len(F)}$)")]
     if nominal:
         t_n, F_n, pv_n, _ = nominal_feed()
         if F_n is not None:
             ax.plot(t_n, F_n, color="black", lw=2.0, zorder=5)
             handles.append(plt.Line2D([], [], color="black", lw=2.0,
-                                      label=f"literature kinetics ({pv_n:.0f} g)"))
+                                      label="reference model"))
     ax.set_xlabel("Time (h)")
     ax.set_ylabel(r"$F$ (L h$^{-1}$)")
-    ax.set_title(f"Optimal feed, {len(F)} sampled parameter sets", loc="left")
-    ax.legend(handles=handles, loc="upper right")
+    if handles:
+        ax.legend(handles=handles, loc="upper right")
+    print(f"plotted {len(F)} draws; structures: "
+          + ", ".join(f"{s_} (n={int((structure == s_).sum())})" for s_ in fams))
     fig.savefig(figure, dpi=600, bbox_inches="tight")
     print(f"saved {figure}")
 
