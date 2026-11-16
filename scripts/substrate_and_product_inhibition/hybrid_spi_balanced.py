@@ -266,9 +266,16 @@ if __name__ == "__main__":
     axd["state"].plot(T, Yf[:, 0], label=r"$XV$", color=oi["sky_blue"])
     axd["state"].plot(T, Yf[:, 1], label=r"$SV$",color=oi["orange"] )
     axd["state"].plot(T, Yf[:, 2] / 5, label=r"$PV / 5$", color=oi["bluish_green"])
-    axd["state"].plot(T, Yf[:, 3], label=r"$V$", color=oi["vermillion"])
-    axd["state"].set_ylabel("Mass (g), Volume (L)")
-    axd["state"].legend(ncol=4, loc="lower center", bbox_to_anchor=(0.5, 1.01),
+    axd["state"].set_ylabel("Mass (g)")
+    # volume on its own right-hand axis
+    axV2 = axd["state"].twinx()
+    axV2.plot(T, Yf[:, 3], label=r"$V$", color=oi["vermillion"], ls="-.")
+    axV2.set_ylabel("Volume (L)")
+    axV2.set_ylim(bottom=0)
+    axV2.grid(False)
+    h1, l1 = axd["state"].get_legend_handles_labels()
+    h2, l2 = axV2.get_legend_handles_labels()
+    axd["state"].legend(h1 + h2, l1 + l2, ncol=4, loc="lower center", bbox_to_anchor=(0.5, 1.01),
                         frameon=False, borderaxespad=0.0)
 
     axd["SP"].plot(T, S_all, label="S", color=oi["orange"], ls="--", lw=1.8)
