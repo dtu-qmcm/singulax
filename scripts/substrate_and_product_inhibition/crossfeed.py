@@ -46,7 +46,9 @@ from sampling_spi import params_from_row                                  # noqa
 CFG = DEFAULT_CONFIG
 ENSEMBLE = MC / "feed_ensemble_balanced_cv20.npz"
 NOMINAL = MC / "feed_nominal_balanced.npz"
-FIGURE = HERE / "crossfeed.png"
+FIG_DIR = HERE.parents[1] / "figures"
+FIG_DIR.mkdir(exist_ok=True)
+FIGURE = FIG_DIR / "spi_crossfeed.png"
 
 #: Okabe-Ito, in the SAME ROLES sampling_spi.py assigns them: black for reference
 #: lines, and the bluish-green / vermillion pair for good vs bad -- exactly how the SRC

@@ -6,6 +6,7 @@ On the singular arc the optimum holds S at S* = sqrt(Ks*Ki), giving the analytic
  """
 import diffrax
 import os
+from pathlib import Path
 import optimistix as optx
 from diffrax import ODETerm, Kvaerno5, SaveAt, diffeqsolve, PIDController
 import matplotlib.pyplot as plt
@@ -116,8 +117,9 @@ print("Final PV value", y_max[-1, 2])
 print("Final V value", y_max[-1, 3])
 
 plt.tight_layout(rect=[0, 0.03, 1, 0.96])
-script_dir = os.path.dirname(os.path.abspath(__file__))
+fig_dir = Path(__file__).resolve().parents[4] / "figures"
+fig_dir.mkdir(exist_ok=True)
 file_name = "output_ana_si_bang_sing_batch.png"
-output_path = os.path.join(script_dir, file_name)
+output_path = fig_dir / file_name
 plt.savefig(output_path, facecolor='white')
 plt.show()

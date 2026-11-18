@@ -16,6 +16,7 @@ import diffrax
 import optimistix as optx
 import matplotlib.pyplot as plt
 import os
+from pathlib import Path
 from diffrax import ODETerm, SaveAt, diffeqsolve, PIDController
 from scipy.integrate import solve_ivp
 
@@ -252,8 +253,9 @@ ax.set_xlim(t_switch, t_switch + 0.15)
 ax.legend(fontsize=8); ax.grid(True)
 
 plt.tight_layout()
-script_dir = os.path.dirname(os.path.abspath(__file__))
-out = os.path.join(script_dir, 'output_forward_single_shooting.png')
+fig_dir = Path(__file__).resolve().parents[4] / "figures"
+fig_dir.mkdir(exist_ok=True)
+out = fig_dir / 'output_forward_single_shooting.png'
 plt.savefig(out, dpi=120, bbox_inches='tight')
 plt.show()
 print(f"\nPlot saved to {out}")

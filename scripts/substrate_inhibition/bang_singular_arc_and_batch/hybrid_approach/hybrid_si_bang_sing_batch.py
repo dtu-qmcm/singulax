@@ -12,6 +12,7 @@ from singulax.substrate_inhibition.odes import states_ode_phys, vf_states, vecto
 from singulax.substrate_inhibition.Fsin import get_Fsin_unconstrained
 from singulax.collocation import CollocParams, unpack, objective, constraints, jac_defects, detect_switches
 import os
+from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")                      
 import matplotlib.pyplot as plt
@@ -98,7 +99,8 @@ if __name__ == "__main__":
     print("  residuals =", np.round(np.asarray(res_r), 8))
 
     # PLOTS
-    here = os.path.dirname(os.path.abspath(__file__))
+    fig_dir = Path(__file__).resolve().parents[4] / "figures"
+    fig_dir.mkdir(exist_ok=True)
     tX = t_grid                                 # state nodes (N+1)
     tU = t_grid[:-1]                            # control nodes (N), piecewise constant
     S1 = X_opt[:, 1] / X_opt[:, 3]              # S = SV / V
@@ -112,7 +114,7 @@ if __name__ == "__main__":
     ax[3].step(tU, U_opt, where="post", color="tab:purple"); ax[3].set_title("feed F (control)")
     ax[3].set_xlabel("t [h]"); ax[3].set_ylim(F_min - 0.1, F_max + 0.1)
     fig1.suptitle("STAGE 1 — direct forward-Euler collocation (IPOPT)")
-    fig1.tight_layout(); fig1.savefig(os.path.join(here, "hybrid_bsb_stage1.png"), dpi=130)
+    fig1.tight_layout(); fig1.savefig(fig_dir / "hybrid_bsb_stage1.png", dpi=130)
 
     # ---------- STAGE 2: reconstruct bang -> singular -> batch, then plot ----------
     sc2 = diffrax.PIDController(rtol=1e-8, atol=1e-8, dtmin=1e-14)
@@ -163,5 +165,5 @@ if __name__ == "__main__":
     ax[5].set_title("costates"); ax[5].set_xlabel("t [h]"); ax[5].legend(ncol=2); _vsw(ax[5])
     fig2.suptitle("STAGE 2 — bang→singular→batch  (t1=%.4f, t2=%.4f, ||res||=%.3g)"
                   % (t1_opt, t2_opt, float(jnp.linalg.norm(res_r))))
-    fig2.tight_layout(); fig2.savefig(os.path.join(here, "hybrid_bsb_stage2.png"), dpi=130)
+    fig2.tight_layout(); fig2.savefig(fig_dir / "hybrid_bsb_stage2.png", dpi=130)
     print("saved: hybrid_bsb_stage1.png, hybrid_bsb_stage2.png")

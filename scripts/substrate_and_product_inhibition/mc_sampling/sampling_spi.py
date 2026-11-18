@@ -81,7 +81,9 @@ HERE = Path(__file__).resolve().parent
 # overwrite each other, which is exactly what happened the first time.
 _TAG = f"balanced_cv{round(CV * 100):02d}"
 RESULTS_CSV = HERE / f"sampling_spi_{_TAG}.csv"
-FIGURE = HERE / f"sampling_spi_{_TAG}.png"
+FIG_DIR = HERE.parents[2] / "figures"
+FIG_DIR.mkdir(exist_ok=True)
+FIGURE = FIG_DIR / f"sampling_spi_{_TAG}.png"
 NOMINAL_NPZ = HERE / "feed_nominal_balanced.npz"
 
 
@@ -232,7 +234,7 @@ def analyse(path=RESULTS_CSV, figure=FIGURE):
     Safe to re-run without re-solving: both inputs are already-computed results.
 
         analyse()                                     # this module's Stage-1 CSV
-        analyse(FEEDS_NPZ, HERE / "sens_hybrid.png")  # the hybrid ensemble
+        analyse(FEEDS_NPZ, FIG_DIR / "sens_hybrid.png")  # the hybrid ensemble
     """
     path = Path(path)
     loader = _load_npz if path.suffix == ".npz" else _load_csv
@@ -371,7 +373,7 @@ if __name__ == "__main__":
         # Sensitivity from feed_ensemble.py's results: nothing is re-solved, and the
         # draws are Stage-2 exact rather than Stage-1 collocation. Separate figure
         # name so it cannot overwrite the CSV-based one.
-        analyse(HERE / f"feed_ensemble_{_TAG}.npz", HERE / f"sampling_spi_{_TAG}_hybrid.png")
+        analyse(HERE / f"feed_ensemble_{_TAG}.npz", FIG_DIR / f"sampling_spi_{_TAG}_hybrid.png")
     else:
         if "--analyse" not in sys.argv:  # --analyse re-reads the CSV without re-solving
             run_sampling()

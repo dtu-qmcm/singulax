@@ -8,7 +8,11 @@ This is a stand-alone script; it only needs numpy and matplotlib.
 """
 
 import numpy as np
+from pathlib import Path
 import matplotlib.pyplot as plt
+
+fig_dir = Path(__file__).resolve().parents[4] / "figures"
+fig_dir.mkdir(exist_ok=True)
 
 k = 641.0    # eigenvalue of the batch-phase costate ODE
 c = 41.25    # constant term
@@ -164,6 +168,6 @@ ax.set_xlim(0, T)
 ax.grid(True)
 
 plt.tight_layout()
-plt.savefig("demo_instability.png", dpi=120, bbox_inches='tight')
+plt.savefig(fig_dir / "demo_instability.png", dpi=120, bbox_inches='tight')
 plt.show()
 print("\nPlot saved to demo_instability.png")

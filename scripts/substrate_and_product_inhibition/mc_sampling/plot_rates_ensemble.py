@@ -37,7 +37,9 @@ from sampling_spi import CV, NAMES, sample_X                      # noqa: E402
 N = int(sys.argv[1]) if len(sys.argv) > 1 else 100
 SEED = 1234
 HERE = Path(__file__).resolve().parent
-FIGURE = HERE / f"rates_ensemble_balanced_cv{round(CV * 100):02d}.png"
+FIG_DIR = HERE.parents[2] / "figures"
+FIG_DIR.mkdir(exist_ok=True)
+FIGURE = FIG_DIR / f"rates_ensemble_balanced_cv{round(CV * 100):02d}.png"
 
 #: Ranges the optimal trajectories actually visit: S peaks near 26 g/L at the singular
 #: entry, P reaches ~57 g/L at t_f (PV 566 g in 10 L).

@@ -3,6 +3,7 @@ Indirect PMP shooting approach to solve the case where the optimal control struc
 """
 import optimistix as optx
 import os
+from pathlib import Path
 import jax
 import diffrax
 import jax.numpy as jnp
@@ -160,8 +161,9 @@ if __name__ == "__main__":
         print("Final V value", y_plot[-1, 3])
 
         plt.tight_layout(rect=[0, 0.03, 1, 0.96])
-        script_dir = os.path.dirname(os.path.abspath(__file__))
+        fig_dir = Path(__file__).resolve().parents[4] / "figures"
+        fig_dir.mkdir(exist_ok=True)
         file_name = "output_pmp_si_sing.png"
-        output_path = os.path.join(script_dir, file_name)
+        output_path = fig_dir / file_name
         plt.savefig(output_path)
         plt.show()

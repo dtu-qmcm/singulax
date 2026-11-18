@@ -4,6 +4,7 @@ Indirect PMP shooting approach to solve the case where the optimal control struc
 import optimistix as optx
 import jax
 import os
+from pathlib import Path
 import diffrax
 import jax.numpy as jnp
 from diffrax import ODETerm, Kvaerno5, SaveAt, diffeqsolve, Dopri5
@@ -218,9 +219,10 @@ if __name__ == "__main__":
         print("Final PV value", y_plot[-1, 2])
         print("Final V value", y_plot[-1, 3])
 
-        script_dir = os.path.dirname(os.path.abspath(__file__))
+        fig_dir = Path(__file__).resolve().parents[4] / "figures"
+        fig_dir.mkdir(exist_ok=True)
         file_name = "output_pmp_sing_and_batch.png"
-        output_path = os.path.join(script_dir, file_name)
+        output_path = fig_dir / file_name
         plt.savefig(output_path)
         plt.show()
         
@@ -252,8 +254,8 @@ if __name__ == "__main__":
         axes_lam[3].set_title('Adjoint for V')
         axes_lam[3].set_xlabel('Time (h)')
         axes_lam[3].grid(True)
-        file_name_lam = "output_lambdas_detail.png"
-        output_path_lam = os.path.join(script_dir, file_name_lam)
+        file_name_lam = "output_pmp_si_sing_and_batch_lambdas.png"
+        output_path_lam = fig_dir / file_name_lam
         fig_lam.savefig(output_path_lam)
         plt.show()
 

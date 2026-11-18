@@ -9,6 +9,7 @@ Stage 2 (indirect): PMP multiple shooting, initialized from Stage 1, that refine
 the switching times and the adjoints to high accuracy.
 """
 import jax
+from pathlib import Path
 import matplotlib.pyplot as plt
 import diffrax
 import optimistix as optx
@@ -18,6 +19,9 @@ import numpy as np
 from scipy.signal import medfilt
 from scipy.sparse import coo_array
 from cyipopt import minimize_ipopt
+
+fig_dir = Path(__file__).resolve().parents[2] / "figures"
+fig_dir.mkdir(exist_ok=True)
 
 jax.config.update("jax_enable_x64", True)
 
@@ -369,7 +373,7 @@ if __name__ == "__main__":
     
     fig.suptitle("Stage 1 Optimization Results", fontsize = 16)
     plt.tight_layout()
-    plt.savefig("hybrid_example_stage1.png", dpi=110)
+    plt.savefig(fig_dir / "hybrid_example_stage1.png", dpi=110)
     print("\nsaved plot -> hybrid_example_stage1.png")
 
     # STAGE 2 PLOT: reconstruct dense trajectories from the converged solution
@@ -424,5 +428,5 @@ if __name__ == "__main__":
     fig2.suptitle("Stage 2 Optimization Results", fontsize=16)
 
     plt.tight_layout()
-    plt.savefig("hybrid_example_stage2.png", dpi=110)
+    plt.savefig(fig_dir / "hybrid_example_stage2.png", dpi=110)
     print("saved plot -> hybrid_example_stage2.png")

@@ -76,7 +76,7 @@ To execute the example, run:
 python hybrid_example.py
 ```
 
-It prints the Stage-1 and Stage-2 results to the console and exports two figures:
+It prints the Stage-1 and Stage-2 results to the console and exports two figures to `figures/` at the repository root:
 * `hybrid_example_stage1.png`
 * `hybrid_example_stage2.png`
 

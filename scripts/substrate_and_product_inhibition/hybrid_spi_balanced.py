@@ -1,6 +1,7 @@
 import jax
 import diffrax
 import os
+from pathlib import Path
 from functools import partial
 import matplotlib
 matplotlib.use("Agg")                      
@@ -111,7 +112,8 @@ if __name__ == "__main__":
     "black":        "#000000",
     "reddish_purple": "#CC79A7"   
     }
-    here = os.path.dirname(os.path.abspath(__file__))
+    fig_dir = Path(__file__).resolve().parents[2] / "figures"
+    fig_dir.mkdir(exist_ok=True)
     fig, ax = plt.subplots(
     3, 1,
     figsize=(6.5, 7),
@@ -149,7 +151,7 @@ if __name__ == "__main__":
     for a, lab in zip(ax, ["(a)", "(b)", "(c)"]):
         a.set_title(lab, loc="left")
 
-    fig.savefig(os.path.join(here, "spi_stage1_balanced.png"), dpi=600, bbox_inches="tight")
+    fig.savefig(fig_dir / "spi_stage1_balanced.png", dpi=600, bbox_inches="tight")
     print("saved spi_stage1_balanced.png")
 
     # ===== STAGE 2: shooting =====
@@ -324,6 +326,6 @@ if __name__ == "__main__":
     for key, lab in zip(["state", "SP", "phi", "F", "adj"], ["(a)", "(b)", "(c)", "(d)", "(e)"]):
         axd[key].set_title(lab, loc="left")
 
-    fig.savefig(os.path.join(here, "spi_stage2_balanced.png"), dpi=600, bbox_inches="tight")
+    fig.savefig(fig_dir / "spi_stage2_balanced.png", dpi=600, bbox_inches="tight")
     print("saved spi_stage2_balanced.png")
 

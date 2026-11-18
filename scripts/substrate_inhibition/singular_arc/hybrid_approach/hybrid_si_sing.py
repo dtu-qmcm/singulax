@@ -2,6 +2,7 @@
 Hybrid two-stage approach to solve the case where the optimal control structure is F=Fsin (S0=S*).  
 """
 import os
+from pathlib import Path
 import jax
 import matplotlib.pyplot as plt
 import jax.numpy as jnp
@@ -138,7 +139,8 @@ if __name__ == "__main__":
     print("Final PV =", y_plot[-1, 2])
     print("Final V  =", y_plot[-1, 3])
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    fig_dir = Path(__file__).resolve().parents[4] / "figures"
+    fig_dir.mkdir(exist_ok=True)
 
     # ---- STAGE 1 PLOT ----
     t_state = np.linspace(0, tf, N + 1)
@@ -165,7 +167,7 @@ if __name__ == "__main__":
 
     fig1.suptitle("Stage 1: Forward Euler Discretization", fontsize=16)
     plt.tight_layout()
-    fig1.savefig(os.path.join(script_dir, "hybrid_si_sing_stage1.png"), dpi=110)
+    fig1.savefig(fig_dir / "hybrid_si_sing_stage1.png", dpi=110)
     print("saved -> hybrid_si_sing_stage1.png")
 
     # ---- STAGE 2 PLOT ----
@@ -190,5 +192,5 @@ if __name__ == "__main__":
 
     fig2.suptitle("Stage 2: indirect single shooting", fontsize=16)
     plt.tight_layout()
-    fig2.savefig(os.path.join(script_dir, "hybrid_si_sing_stage2.png"), dpi=110)
+    fig2.savefig(fig_dir / "hybrid_si_sing_stage2.png", dpi=110)
     print("saved -> hybrid_si_sing_stage2.png")

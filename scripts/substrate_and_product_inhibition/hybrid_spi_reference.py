@@ -14,6 +14,7 @@ Run as a script; writes spi_stage1_reference.png and spi_stage2_reference.png ne
 import jax
 import diffrax
 import os
+from pathlib import Path
 from functools import partial
 import matplotlib
 matplotlib.use("Agg")                      
@@ -122,7 +123,8 @@ if __name__ == "__main__":
     "black":        "#000000",
     "reddish_purple": "#CC79A7"   
     }
-    here = os.path.dirname(os.path.abspath(__file__))
+    fig_dir = Path(__file__).resolve().parents[2] / "figures"
+    fig_dir.mkdir(exist_ok=True)
     fig, ax = plt.subplots(
     3, 1,
     figsize=(6.5, 7),
@@ -147,7 +149,7 @@ if __name__ == "__main__":
     ax[2].set_xlabel("Time (h)")
     ax[2].set_ylim(F_min - 0.1, F_max + 0.1)
 
-    fig.savefig(os.path.join(here, "spi_stage1_refence.png"), dpi=600, bbox_inches="tight")
+    fig.savefig(fig_dir / "spi_stage1_reference.png", dpi=600, bbox_inches="tight")
     print("saved spi_stage1_reference.png")
 
     # ===== STAGE 2: shooting =====
@@ -279,6 +281,6 @@ if __name__ == "__main__":
     for a in axd.values():
         for tsw in sw_eff:
             a.axvline(tsw,color="0.5",ls=":",lw=0.8)
-    fig.savefig(os.path.join(here, "spi_stage2_reference.png"), dpi=600, bbox_inches="tight")
+    fig.savefig(fig_dir / "spi_stage2_reference.png", dpi=600, bbox_inches="tight")
     print("saved spi_stage2_reference.png")
 

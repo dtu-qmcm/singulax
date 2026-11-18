@@ -1,8 +1,12 @@
 """Specific rates against substrate concentration."""
+from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+
+fig_dir = Path(__file__).resolve().parents[3] / "figures"
+fig_dir.mkdir(exist_ok=True)
 
 from singulax.substrate_product_inhibition.kinetics import BALANCED, mu, pi, sigma
 
@@ -55,8 +59,8 @@ axes[0, 0].set_title("(a) linear S -- the operating range", loc="left")
 axes[1, 0].set_title("(b) log S -- where the Monod term lives", loc="left")
 
 fig.suptitle("Specific rates, carbon- and redox-balanced model", fontsize=10)
-fig.savefig("rates_vs_S.png", dpi=600, bbox_inches="tight")
-print("saved rates_vs_S.png")
+fig.savefig(fig_dir / "spi_rates_vs_S.png", dpi=600, bbox_inches="tight")
+print("saved spi_rates_vs_S.png")
 
 # ---- the numbers behind the panels, so the figure can be checked by eye ----
 print(f"\nplateau (S -> inf)")

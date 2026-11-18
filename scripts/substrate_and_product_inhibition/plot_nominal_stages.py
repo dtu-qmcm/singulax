@@ -44,7 +44,9 @@ from crossfeed import simulate                                        # noqa: E4
 CFG = ProblemConfig(F_init=0.5, ls_max_steps=10000, ipopt_max_iter=20000)
 
 NOMINAL = MC / "feed_nominal_balanced.npz"
-FIGURE = HERE / "nominal_stages.png"
+FIG_DIR = HERE.parents[1] / "figures"
+FIG_DIR.mkdir(exist_ok=True)
+FIGURE = FIG_DIR / "spi_nominal_stages.png"
 
 #: Okabe-Ito in the roles the other figures use: sky blue for the direct result,
 #: bluish green for the refined one.

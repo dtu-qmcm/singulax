@@ -22,6 +22,7 @@ import numpy as np
 from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
 import os
+from pathlib import Path
 
 SEP = "=" * 68
 
@@ -397,8 +398,9 @@ ax.set_title('e^(∫λ⁺ dτ) — error growth factor')
 ax.grid(True, which='both')
 
 plt.tight_layout()
-out = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                   'output_sympy_adjoint.png')
+fig_dir = Path(__file__).resolve().parents[4] / "figures"
+fig_dir.mkdir(exist_ok=True)
+out = fig_dir / 'output_sympy_adjoint.png'
 plt.savefig(out, dpi=120, bbox_inches='tight')
 plt.show()
 print(f"Plot saved to {out}")

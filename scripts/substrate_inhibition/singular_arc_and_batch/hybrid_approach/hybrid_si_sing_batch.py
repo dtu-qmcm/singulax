@@ -12,6 +12,7 @@ from singulax.substrate_inhibition.odes import states_ode_phys, vf_states, vecto
 from singulax.substrate_inhibition.Fsin import get_Fsin_unconstrained
 from singulax.collocation import CollocParams, unpack, objective, constraints, jac_defects
 import os
+from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")                      
 import matplotlib.pyplot as plt
@@ -106,7 +107,8 @@ if __name__ == "__main__":
     print("PV(tf)      =", round(float(x_tf[2]), 4))
 
     # ================================ PLOTS ================================
-    here = os.path.dirname(os.path.abspath(__file__))
+    fig_dir = Path(__file__).resolve().parents[4] / "figures"
+    fig_dir.mkdir(exist_ok=True)
 
     # ---------- STAGE 1: direct-collocation solution ----------
     tX = t_grid                                 # state nodes (N+1)
@@ -122,7 +124,7 @@ if __name__ == "__main__":
     ax[3].step(tU, U_opt, where="post", color="tab:purple"); ax[3].set_title("feed F (control)")
     ax[3].set_xlabel("t [h]"); ax[3].set_ylim(F_min - 0.1, F_max + 0.1)
     fig1.suptitle("STAGE 1 — direct forward-Euler collocation (IPOPT)")
-    fig1.tight_layout(); fig1.savefig(os.path.join(here, "hybrid_fwd_stage1.png"), dpi=130)
+    fig1.tight_layout(); fig1.savefig(fig_dir / "hybrid_si_sing_batch_stage1.png", dpi=130)
 
     # ---------- STAGE 2: assemble the forward hybrid trajectory ----------
     ts_a = np.asarray(sol_s.ts); y_a = np.asarray(sol_s.ys)          # arc: 200 x 8 (state + costate)
@@ -180,5 +182,5 @@ if __name__ == "__main__":
     ln1, lb1 = ax[5].get_legend_handles_labels(); ln2, lb2 = ax5r.get_legend_handles_labels()
     ax[5].legend(ln1 + ln2, lb1 + lb2, ncol=2, loc="best"); _vsw(ax[5])
     fig2.suptitle("STAGE 2 — forward hybrid (singular arc + batch), t_switch = %.4f" % t_switch_opt)
-    fig2.tight_layout(); fig2.savefig(os.path.join(here, "hybrid_fwd_stage2.png"), dpi=130)
-    print("saved: hybrid_fwd_stage1.png, hybrid_fwd_stage2.png")
+    fig2.tight_layout(); fig2.savefig(fig_dir / "hybrid_si_sing_batch_stage2.png", dpi=130)
+    print("saved: hybrid_si_sing_batch_stage1.png, hybrid_si_sing_batch_stage2.png")

@@ -49,7 +49,9 @@ CFG = DEFAULT_CONFIG._replace(F_init=0.5, ls_max_steps=10000, ipopt_max_iter=200
 RES_TOL = CFG.res_tol
 
 CACHE = MC / "stage1_rejected.npz"
-FIGURE = HERE / "rejected_feeds.png"
+FIG_DIR = HERE.parents[1] / "figures"
+FIG_DIR.mkdir(exist_ok=True)
+FIGURE = FIG_DIR / "spi_rejected_feeds.png"
 
 #: 0.1 mL in a 10 L tank. hybrid.VMAX_TOL = 1e-6 is tighter than IPOPT's own
 #: convergence, so it reports "no boundary arc" on solutions that have one.
