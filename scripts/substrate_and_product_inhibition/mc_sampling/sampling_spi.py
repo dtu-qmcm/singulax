@@ -39,7 +39,7 @@ def _lognormal_mean(mean, cv=CV):
     return _lognormal(np.log(mean) - sigma_log**2 / 2, sigma_log)
 
 
-# Priors -- means are the Shin & Lim example 13.E.3 values, sd = 10% of the mean.
+# Priors -- means are the Shin & Lim example 13.E.3 values, sd = CV x mean (CV above).
 # Y_xs is NOT here: under the balanced model the biomass yield is an OUTPUT of
 # the carbon/redox balance, not a free parameter (see .stoichiometry).
 mu_max = _lognormal_mean(0.408)          # max specific growth rate [1/h]
