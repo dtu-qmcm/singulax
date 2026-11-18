@@ -82,7 +82,28 @@ HERE = Path(__file__).resolve().parent
 _TAG = f"balanced_cv{round(CV * 100):02d}"
 RESULTS_CSV = HERE / f"sampling_spi_{_TAG}.csv"
 FIGURE = HERE / f"sampling_spi_{_TAG}.png"
-NOMINAL_PV = 608.05                      # PV(tf) of the BALANCED model at the literature kinetics
+NOMINAL_NPZ = HERE / "feed_nominal_balanced.npz"
+
+
+def _nominal_pv(path=NOMINAL_NPZ):
+    """PV(tf) of the BALANCED model at the literature kinetics.
+
+    Read from feed_ensemble.py's cached hybrid solve rather than written down. The
+    value depends on t_end, V_max and F_max, so a literal goes stale silently the
+    first time any of them changes -- which is what happened: the constant here said
+    608.05 g (added 2026-10-09, before the V_max exit anchor settled) while the
+    converged solve gives 566.54 g at ||res|| 1.8e-12. The figure drew the nominal
+    marker to the right of nearly the whole ensemble, implying the literature model
+    outperforms almost every sampled one, when in fact it sits at the mean.
+    """
+    try:
+        return float(np.load(path, allow_pickle=True)["PV"])
+    except Exception:                                             # noqa: BLE001
+        print(f"   WARNING: {path.name} missing; nominal marker disabled")
+        return np.nan
+
+
+NOMINAL_PV = _nominal_pv()
 
 COLS = (["i", "ok", "status", "PV", "defect_norm", "structure", "seconds"] + NAMES
         + ["Y_xs_overall", "Y_ps_overall", "carbon_accounted"])
