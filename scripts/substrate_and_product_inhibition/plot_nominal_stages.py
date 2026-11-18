@@ -96,11 +96,7 @@ def main():
     # line here would quietly show the reader a control the method never produced,
     # and would hide the chatter that is the whole reason Stage 3 exists.
     axA.step(s1.t_grid, F1, where="post", color=OI["sky_blue"], zorder=3)
-    note(axA, f"structure detected  {'-'.join(map(str, s1.seq))}\n"
-              f"$N$ = {len(s1.U)} nodes\n$PV$ = {pv1:.0f} g")
-
     axB.plot(t3, F3, color=OI["bluish_green"], zorder=3)
-    note(axB, f"structure imposed  {z['structure']}\n$PV$ = {pv3:.0f} g")
 
     for ax in (axA, axB):
         ax.set_xlabel("Time (h)")
